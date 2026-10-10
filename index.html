@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>汤姆猫跑酷学堂 · 边跑边学，快乐成长</title>
+  <meta name="description" content="中小学生跑酷闯关学习平台：三跑道跑酷答题、实时积分榜单、错题修复、教师端学情与课堂竞速。答案判定引擎已修复。">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐱</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="aurora"><span></span><span></span><span></span></div>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="#/home">
+          <div class="brand-mark">🐱</div>
+          <div>
+            <div class="brand-text">汤姆猫跑酷学堂</div>
+            <div class="brand-sub">RUN · LEARN · LEVEL UP</div>
+          </div>
+        </a>
+        <nav class="nav">
+          <a href="#/home" data-nav="home">首页</a>
+          <a href="#/student" data-nav="student">学生端</a>
+          <a href="#/leaderboard" data-nav="leaderboard">实时榜单</a>
+          <a href="#/teacher" data-nav="teacher" class="teacher-link">教师端</a>
+          <a href="#/guide" data-nav="guide">使用解说</a>
+        </nav>
+        <div class="topstats">
+          <button class="pill role-pill" id="roleSwitch" data-action="toggle-role" title="切换身份：学生 / 老师">🧑‍🎓 学生</button>
+          <button class="pill guide-pill" data-action="open-guide" title="查看使用解说">❓ 使用解说</button>
+          <span class="pill" id="topLive" title="数据源状态">🟡 本地模拟</span>
+          <span class="pill points">🏆 <b id="topPoints">0</b> 分</span>
+          <span class="pill gold">🪙 <b id="topCoins">0</b></span>
+          <span class="avatar-chip"><span class="avatar" id="topEmoji">🐱</span><span id="topName">小跑者</span></span>
+        </div>
+      </div>
+    </header>
+
+    <main class="page" id="view">
+      <div class="card"><div class="skeleton" style="height:22px;width:40%;margin-bottom:14px"></div>
+      <div class="skeleton" style="height:14px;width:70%;margin-bottom:8px"></div>
+      <div class="skeleton" style="height:14px;width:55%"></div></div>
+    </main>
+
+    <nav class="mobile-nav">
+      <a href="#/home" data-nav="home"><span class="em">🏠</span>首页</a>
+      <a href="#/student" data-nav="student"><span class="em">🐱</span>学生端</a>
+      <a href="#/leaderboard" data-nav="leaderboard"><span class="em">🏆</span>榜单</a>
+      <a href="#/student/garden" data-nav="garden"><span class="em">🏡</span>家园</a>
+      <a href="#/teacher" data-nav="teacher"><span class="em">🧑‍🏫</span>教师端</a>
+    </nav>
+  </div>
+
+  <script src="engine.js"></script>
+  <script src="api.js"></script>
+  <script src="game.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
