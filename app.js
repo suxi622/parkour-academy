@@ -78,6 +78,7 @@
       customQuestions: [],    // 教师自定义题目
       classes: [],            // 不再内置任何班级 / 测试账号，全部由老师创建
       homework: [],           // 教师发布的作业：[{ id, title, classId, className, questionIds, createdAt, due, status, submissions }]
+      asks: [],               // 学生向老师提的问题：[{ id, student, klass, text, image, createdAt, status, answer, answeredAt, answeredBy }]
       joinedClassIds: [],     // 学生已加入的班级
       seenGuide: false,       // 是否看过使用解说
       leader: null,
@@ -252,6 +253,80 @@
   function homeworkDone(h) {
     var s = h.submissions && h.submissions[S.user.name];
     return !!(s && s.victory);
+  }
+
+  /* ---------------- 学生提问 / 老师回复 ---------------- */
+  function allAsks() {
+    return (S.asks || []).slice().sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+  }
+  function askById(id) { return (S.asks || []).filter(function (a) { return a.id === id; })[0] || null; }
+  function myAsks() { return allAsks().filter(function (a) { return a.student === S.user.name; }); }
+  function pendingAskCount() { return allAsks().filter(function (a) { return a.status !== 'answered'; }).length; }
+  function askTimeText(at) {
+    if (!at) return '';
+    var d = new Date(at);
+    var same = new Date().toDateString() === d.toDateString();
+    return same
+      ? (String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'))
+      : ((d.getMonth() + 1) + '月' + d.getDate() + '日 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'));
+  }
+  /** 合并一条来自云端中继的提问 / 回复，返回是否有变化 */
+  function mergeAsk(m) {
+    if (!m || !m.qid) return false;
+    S.asks = S.asks || [];
+    if (m.kind === 'reply') {
+      var target = askById(m.qid);
+      if (!target) {
+        S.asks.unshift({
+          id: m.qid, student: m.sn || '同学', emoji: m.se || '🙂', klass: m.sk || '',
+          text: m.qt || '', image: m.qimg || '', createdAt: m.qat || m.at || Date.now(),
+          status: 'answered', answer: m.text || '', answeredAt: m.at || Date.now(), answeredBy: m.n || '老师'
+        });
+        return true;
+      }
+      if (target.answer === (m.text || '')) return false;
+      target.answer = m.text || '';
+      target.status = 'answered';
+      target.answeredAt = m.at || Date.now();
+      target.answeredBy = m.n || '老师';
+      return true;
+    }
+    var cur = askById(m.qid);
+    if (cur) {
+      var touched = false;
+      if (m.img && cur.image !== m.img) { cur.image = m.img; touched = true; }
+      return touched;
+    }
+    S.asks.unshift({
+      id: m.qid, student: m.n || '同学', emoji: m.e || '🙂', klass: m.k || '',
+      text: m.text || '', image: m.img || '', createdAt: m.at || Date.now(), status: 'open'
+    });
+    return true;
+  }
+  function askRowHtml(a, forTeacher) {
+    var answered = a.status === 'answered';
+    return '<div class="ask-row' + (answered ? ' done' : '') + '">' +
+      '<div class="ask-head">' +
+        '<span class="ask-avatar">' + esc(a.emoji || '🙂') + '</span>' +
+        '<div class="grow">' +
+          '<div class="ask-meta"><b>' + esc(a.student || '同学') + '</b>' +
+            (forTeacher && a.klass ? '<span class="badge">' + esc(a.klass) + '</span>' : '') +
+            '<span class="muted">' + esc(askTimeText(a.createdAt)) + '</span>' +
+            '<span class="badge ' + (answered ? 'live' : '') + '">' + (answered ? '老师已回复' : '等待老师回复') + '</span>' +
+          '</div>' +
+          '<div class="ask-text">' + esc(a.text) + '</div>' +
+          (a.image ? '<img class="q-image" src="' + esc(a.image) + '" alt="提问配图">' : '') +
+        '</div>' +
+      '</div>' +
+      (answered
+        ? '<div class="ask-answer"><b>' + esc(a.answeredBy || '老师') + '：</b>' + esc(a.answer || '') +
+          '<div class="lb-sub">' + esc(askTimeText(a.answeredAt)) + '</div></div>'
+        : (forTeacher
+            ? '<div class="ask-reply"><textarea class="textarea" id="askReply-' + a.id + '" rows="2" placeholder="写下你的回复，学生端会立刻看到…"></textarea>' +
+              '<div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-teacher btn-sm" data-action="ask-reply" data-id="' + a.id + '">发送回复</button>' +
+              '<button class="btn btn-ghost btn-sm" data-action="ask-delete" data-id="' + a.id + '">删除</button></div></div>'
+            : '<div class="ask-waiting">⏳ 老师还没回复，可以先继续闯关～</div>')) +
+    '</div>';
   }
 
   /* ============================================================
@@ -561,6 +636,21 @@
       '</section>';
     }
 
+    var mine = myAsks();
+    if (mine.length) {
+      var openMine = mine.filter(function (a) { return a.status !== 'answered'; });
+      html += '<section class="card fade-in" style="margin-top:18px">' +
+        '<div class="row between wrap" style="gap:10px">' +
+          '<div class="card-title" style="margin:0"><span class="emoji">🙋</span>我的提问 <span class="card-sub">待回复 ' + openMine.length + ' / 共 ' + mine.length + ' 条</span></div>' +
+          '<div class="row" style="gap:8px">' +
+            '<button class="btn btn-ghost btn-sm" data-go="#/student/ask">全部提问 →</button>' +
+            '<button class="btn btn-accent btn-sm" data-action="ask-open">＋ 向老师提问</button>' +
+          '</div>' +
+        '</div>' +
+        '<div style="margin-top:12px">' + mine.slice(0, 2).map(function (a) { return askRowHtml(a, false); }).join('') + '</div>' +
+      '</section>';
+    }
+
     html += '<section class="card" style="margin-top:18px">' +
       '<div class="card-title"><span class="emoji">📚</span>选择学科 <span class="card-sub">共 9 个学科</span></div>' +
       '<div class="subject-grid">' + PK.SUBJECTS.map(subjectTile).join('') + '</div>' +
@@ -585,6 +675,7 @@
     '</section>';
 
     html += '<section class="grid grid-4" style="margin-top:18px">' +
+      quickLink('🙋', '向老师提问', '不会的题直接问老师', '#/student/ask') +
       quickLink(partnerMeta(equippedPartnerId()).emoji, '伙伴 ' + partnerMeta(equippedPartnerId()).name,
         'Lv' + partnerLevel(equippedPartnerId()) + ' · 点我和我聊天', '#/student/chat') +
       quickLink('🧯', '错题修复', S.wrongIds.length + ' 道错题待复习', '#/student/wrong') +
@@ -1244,6 +1335,29 @@
   }
 
   /* ============================================================
+   * 我的提问（学生）
+   * ============================================================ */
+  function viewMyAsks() {
+    var mine = myAsks();
+    var pending = mine.filter(function (a) { return a.status !== 'answered'; }).length;
+    var html = '<div class="fade-in">' +
+      '<div class="row between wrap" style="gap:12px;margin-bottom:16px">' +
+        '<div><h2 style="font-size:20px;font-weight:900">🙋 我的提问</h2>' +
+        '<p class="muted" style="font-size:13px;margin-top:4px">共 ' + mine.length + ' 条 · 待回复 ' + pending + ' 条 · 老师回复后会出现在下面</p></div>' +
+        '<div class="row" style="gap:8px;flex-wrap:wrap">' +
+          '<button class="btn btn-primary" data-action="ask-open">＋ 向老师提问</button>' +
+          '<button class="btn btn-ghost" data-go="#/student">← 返回学生端</button>' +
+        '</div>' +
+      '</div>';
+    if (!mine.length) {
+      html += '<div class="empty"><span class="em">📮</span>还没有提过问题。<br>遇到不会的题，点右上角「向老师提问」告诉老师吧。</div>';
+    } else {
+      html += '<section class="card">' + mine.map(function (a) { return askRowHtml(a, false); }).join('') + '</section>';
+    }
+    return html + '</div>';
+  }
+
+  /* ============================================================
    * 数据中心
    * ============================================================ */
   function viewData() {
@@ -1422,12 +1536,14 @@
     '</section>';
 
     html += '<div class="filter-tabs" style="margin:18px 0">' +
-      [['classes', '班级学情'], ['homework', '作业管理'], ['questions', '题库管理'], ['engine', '答案判定引擎'], ['race', '课堂竞速']].map(function (t) {
-        return '<button data-action="teacher-tab" data-key="' + t[0] + '" class="' + (ui.teacherTab === t[0] ? 'active' : '') + '">' + t[1] + '</button>';
+      [['classes', '班级学情'], ['ask', '学生提问'], ['homework', '作业管理'], ['questions', '题库管理'], ['engine', '答案判定引擎'], ['race', '课堂竞速']].map(function (t) {
+        var badge = (t[0] === 'ask' && pendingAskCount()) ? ' <span class="tab-badge">' + pendingAskCount() + '</span>' : '';
+        return '<button data-action="teacher-tab" data-key="' + t[0] + '" class="' + (ui.teacherTab === t[0] ? 'active' : '') + '">' + t[1] + badge + '</button>';
       }).join('') +
     '</div>';
 
     if (ui.teacherTab === 'classes') html += teacherClasses();
+    else if (ui.teacherTab === 'ask') html += teacherAskView();
     else if (ui.teacherTab === 'homework') html += teacherHomework();
     else if (ui.teacherTab === 'questions') html += teacherQuestions();
     else if (ui.teacherTab === 'engine') html += teacherEngine(test);
@@ -1491,6 +1607,22 @@
           '<td>' + (e.streak || 0) + ' 题</td>' +
           '<td>' + tag + '</td></tr>';
       }).join('') + '</tbody></table>';
+  }
+
+  function teacherAskView() {
+    var list = allAsks();
+    var pending = list.filter(function (a) { return a.status !== 'answered'; });
+    var html = '<section class="card">' +
+      '<div class="row between wrap" style="gap:12px;margin-bottom:14px">' +
+        '<div><div class="card-title" style="margin:0"><span class="emoji">🙋</span>学生提问 <span class="card-sub">共 ' + list.length + ' 条 · 待回复 ' + pending.length + ' 条</span></div>' +
+        '<p class="muted" style="font-size:12.5px;margin-top:6px">学生在「学生端 → 向老师提问」发来的问题会出现在这里；回复后学生端立刻能看到（同一个网址的不同设备通过云端实时同步）。</p></div>' +
+        '<button class="btn btn-ghost btn-sm" data-action="ask-refresh">🔄 刷新</button>' +
+      '</div>' +
+      (list.length
+        ? list.map(function (a) { return askRowHtml(a, true); }).join('')
+        : '<div class="empty"><span class="em">📭</span>暂时还没有学生提问。<br>把网址发给学生，他们在学生端点「向老师提问」就能给你留言。</div>') +
+    '</section>';
+    return html;
   }
 
   function teacherHomework() {
@@ -1750,6 +1882,7 @@
       else if (seg[1] === 'garden') html = viewGarden();
       else if (seg[1] === 'data') html = viewData();
       else if (seg[1] === 'chat') html = viewChat();
+      else if (seg[1] === 'ask') html = viewMyAsks();
       else html = viewStudent();
     } else if (seg[0] === 'leaderboard') html = viewLeaderboard();
     else if (seg[0] === 'guide') html = viewGuide();
@@ -1862,6 +1995,32 @@
     pendingLive = true;
     requestAnimationFrame(function () {
       pendingLive = false;
+
+      // 先合并来自云端中继的学生提问 / 老师回复
+      var far = (leaderboard.takeAsks ? leaderboard.takeAsks() : []);
+      if (far.length) {
+        var askChanged = false;
+        far.forEach(function (m) {
+          var existed = !!askById(m.qid);
+          var did = mergeAsk(m);
+          if (did) askChanged = true;
+          if (m.kind === 'ask' && !existed && isTeacher()) {
+            toast('收到 ' + (m.n || '同学') + ' 的新提问', 'ok');
+          } else if (m.kind === 'reply' && did) {
+            var t = askById(m.qid);
+            if (t && t.student === S.user.name) toast('老师回复了你的提问', 'ok');
+          }
+        });
+        if (askChanged) {
+          save();
+          var typing = false;
+          Array.prototype.forEach.call(document.querySelectorAll('textarea[id^="askReply-"]'), function (t) {
+            if (t.value.trim()) typing = true;
+          });
+          if (!currentGame && !typing) render();
+        }
+      }
+
       renderTopStats();
       var snap = leaderboard.snapshot({ range: 'today' });
 
@@ -2113,6 +2272,41 @@
         toast('对话已清空');
         render();
         break;
+      case 'ask-open':
+        openAskTeacher();
+        break;
+      case 'ask-reply': {
+        var askId = actionEl.getAttribute('data-id');
+        var replyBox = $('#askReply-' + askId);
+        var replyText = replyBox ? replyBox.value.trim() : '';
+        if (!replyText) { toast('先写下回复内容再发送', 'bad'); break; }
+        var askRec = askById(askId);
+        if (askRec) {
+          askRec.answer = replyText;
+          askRec.status = 'answered';
+          askRec.answeredAt = Date.now();
+          askRec.answeredBy = S.user.name || '老师';
+        }
+        save();
+        if (leaderboard.publishReply) {
+          leaderboard.publishReply({ qid: askId, text: replyText, n: S.user.name || '老师', at: Date.now() });
+        }
+        toast('回复已发送，学生端可以看到啦', 'ok');
+        render();
+        break;
+      }
+      case 'ask-delete': {
+        var delAsk = actionEl.getAttribute('data-id');
+        S.asks = (S.asks || []).filter(function (a) { return a.id !== delAsk; });
+        save();
+        toast('已删除该提问');
+        render();
+        break;
+      }
+      case 'ask-refresh':
+        render();
+        toast('已刷新');
+        break;
       case 'open-guide':
         openGuide();
         break;
@@ -2348,6 +2542,7 @@
       { e: '🐾', who: '学生', t: '伙伴成长与家园布置', d: '答题赚金币 → 在「我的家园」买伙伴、给伙伴升级（每级金币 +4%、分数 +3%），还能买摆件布置你们的房间。出战哪个伙伴，跑酷游戏里跑的就是它。' },
       { e: '💬', who: '学生', t: '和伙伴聊天', d: '点「学生端 → 伙伴」或家园里的「和伙伴聊天」，可以让它出题、讲题、讲笑话、讲故事、陪你聊心情。默认本地陪伴模式不用联网；想更自由对话，可在「AI 设置」里填自己的大模型接口。' },
       { e: '🧯', who: '学生', t: '错题修复与作业', d: '答错的题会自动进入「错题修复」，答对后自动移出。老师布置的作业会出现在「学生端 → 待完成作业」，点「去完成」即可作答。' },
+      { e: '🙋', who: '学生', t: '不会就问老师', d: '在「学生端 → 向老师提问」写下不会的题或听不懂的知识点（可以配一张题目截图，或粘贴图片网址）。老师在「教师端 → 学生提问」里看到后会逐条回复，回复内容会立刻出现在你的「我的提问」里。' },
       { e: '🏆', who: '全员', t: '实时积分榜单', d: '每次答题的积分都会实时计入榜单，支持今日 / 本周 / 总榜与分学科筛选，含前三名领奖台与实时动态。把网址发给同学，多台设备打开即可同屏竞技。' },
       { e: '📊', who: '老师', t: '学情分析与课堂竞速', d: '「班级学情」查看今日学生积分排行并可一键导出成绩；「课堂竞速」让全班同屏 PK；「答案判定引擎」可查看判分自检与逐题对比。' },
       { e: '🏡', who: '学生', t: '金币与我的家园', d: '闯关获得金币，在「我的家园」兑换伙伴、徽章与赛道主题，让跑酷更有趣。' }
@@ -2568,6 +2763,76 @@
     if (!src) return '';
     return '<div class="attach-preview"><img src="' + esc(src) + '" alt="配图"><button type="button" class="attach-x">×</button>' +
       (name ? '<span class="lb-sub">' + esc(name) + '</span>' : '') + '</div>';
+  }
+
+  /* ============================================================
+   * 学生向老师提问
+   * ============================================================ */
+  function openAskTeacher() {
+    if (isTeacher()) { toast('老师身份不需要提问，可在「学生提问」里回复同学', 'bad'); return; }
+    var wrap = overlay(
+      '<div class="row between"><h3 class="modal-title">🙋 向老师提问</h3><button class="btn btn-ghost btn-sm" data-close>关闭</button></div>' +
+      '<p class="muted modal-sub">不会的题、听不懂的知识点都可以问。老师会在「教师端 → 学生提问」看到并回复，回复后你在这里就能看到。</p>' +
+      '<div class="form-field"><label>你的问题</label>' +
+        '<textarea class="textarea" id="askText" rows="4" placeholder="例如：这道一元二次方程为什么不能直接开平方？"></textarea></div>' +
+      '<div class="grid grid-2">' +
+        '<div class="form-field"><label>题目截图（可选 · 上传）</label>' +
+          '<input class="input" type="file" id="askImage" accept="image/*"><div id="askPreview"></div>' +
+          '<span class="lb-sub">上传的图片保存在你这台设备上，老师端看不到</span></div>' +
+        '<div class="form-field"><label>或粘贴图片网址（可选 · 老师也能看到）</label>' +
+          '<input class="input" id="askImageUrl" placeholder="https://example.com/pic.png">' +
+          '<span class="lb-sub">想让老师也看到图，请用图片网址</span></div>' +
+      '</div>' +
+      '<div id="askMsg" class="muted modal-sub"></div>' +
+      '<div class="row" style="gap:10px"><button class="btn btn-primary grow" id="askSave">发送给老师</button></div>'
+    );
+    wrap.querySelector('[data-close]').onclick = function () { wrap.remove(); };
+
+    var uploaded = '';
+    var fileInput = wrap.querySelector('#askImage');
+    if (fileInput) {
+      fileInput.onchange = function () {
+        var f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        readImageFile(f, function (dataUrl) {
+          uploaded = dataUrl;
+          wrap.querySelector('#askPreview').innerHTML = attachPreviewHtml(dataUrl, f.name);
+          var x = wrap.querySelector('#askPreview .attach-x');
+          if (x) x.onclick = function () { uploaded = ''; wrap.querySelector('#askPreview').innerHTML = ''; fileInput.value = ''; };
+        });
+      };
+    }
+
+    wrap.querySelector('#askSave').onclick = function () {
+      var text = wrap.querySelector('#askText').value.trim();
+      var msg = wrap.querySelector('#askMsg');
+      if (text.length < 2) { msg.innerHTML = '<span class="bad">请把问题写清楚一点（至少 2 个字）</span>'; return; }
+      var imgUrl = wrap.querySelector('#askImageUrl').value.trim();
+      var rec = {
+        id: uid('ask'),
+        student: S.user.name || '同学',
+        emoji: S.user.emoji || '🙂',
+        klass: S.user.klass || '',
+        classId: (myClass() || {}).id || '',
+        text: text.slice(0, 500),
+        image: imgUrl || uploaded,
+        createdAt: Date.now(),
+        status: 'open'
+      };
+      S.asks = S.asks || [];
+      S.asks.unshift(rec);
+      save();
+      if (leaderboard.publishQuestion) {
+        leaderboard.publishQuestion({
+          qid: rec.id, n: rec.student, e: rec.emoji, k: rec.klass,
+          text: rec.text, img: imgUrl || '', at: rec.createdAt
+        });
+      }
+      wrap.remove();
+      confetti(30);
+      toast('问题已发给老师，回复后会出现在「我的提问」里', 'ok');
+      render();
+    };
   }
 
   function showHomeworkPreview(h) {
