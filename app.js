@@ -69,6 +69,10 @@
       masteredIds: [],
       inventory: ['partner-cat'],
       equipped: { partner: 'partner-cat', theme: 'theme-star' },
+      partners: {},           // { 'partner-dino': { level: 2 } } 伙伴等级（金币升级）
+      home: { placed: [] },   // 家园摆件：[{ id, slot }]
+      chat: {},               // { 'partner-cat': [{ who, text, at }] } 与伙伴的聊天记录
+      aiConfig: null,         // 可选：接入自己的大模型 { endpoint, key, model }
       history: [],            // 最近闯关记录
       daily: {},              // { 'YYYY-MM-DD': points }
       customQuestions: [],    // 教师自定义题目
@@ -455,6 +459,7 @@
       featureCard('📈', '实时积分榜单', '答题得分实时入榜，2 秒刷新、名次升降动画、前三名领奖台，支持分学科与时间维度。') +
       featureCard('✅', '答案判定引擎', '统一兼容字母 / 下标 / 选项原文，判断题口语化写法，填空题等价答案与单位容错。') +
       featureCard('🧑‍🏫', '教师端学情', '题库增删改、班级学情看板、课堂竞速、错题统计，一键导出学生成绩。') +
+      featureCard('🐾', '伙伴陪伴与成长', '用答题赚的金币购买伙伴、给它升级、布置家园；出战哪个伙伴，跑酷里跑的就是它，还能陪你聊天。') +
     '</section>';
 
     html += '<section class="split" style="margin-top:26px">' +
@@ -543,6 +548,9 @@
               '<div class="hw-emoji">' + (done ? '✅' : '📌') + '</div>' +
               '<div class="grow"><b>' + esc(h.title) + '</b>' +
                 '<div class="lb-sub">' + count + ' 道题 · ' + (h.due ? ('截止 ' + esc(h.due)) : '长期有效') + ' · 来自 ' + esc(h.className || '我的班级') + '</div>' +
+                (h.note ? '<div class="lb-sub">📝 ' + esc(h.note) + '</div>' : '') +
+                (h.image ? '<img class="q-image hw-image" src="' + esc(h.image) + '" alt="作业配图">' : '') +
+                (h.link && h.link.url ? '<a class="q-link" href="' + esc(h.link.url) + '" target="_blank" rel="noopener">🔗 ' + esc(h.link.title || '参考资料') + '</a>' : '') +
               '</div>' +
               (done
                 ? '<span class="badge live">已完成</span>'
@@ -577,6 +585,8 @@
     '</section>';
 
     html += '<section class="grid grid-4" style="margin-top:18px">' +
+      quickLink(partnerMeta(equippedPartnerId()).emoji, '伙伴 ' + partnerMeta(equippedPartnerId()).name,
+        'Lv' + partnerLevel(equippedPartnerId()) + ' · 点我和我聊天', '#/student/chat') +
       quickLink('🧯', '错题修复', S.wrongIds.length + ' 道错题待复习', '#/student/wrong') +
       quickLink('🏡', '我的家园', '金币 ' + fmt(S.coins) + ' · 装扮与徽章', '#/student/garden') +
       quickLink('📊', '数据中心', '正确率 ' + acc + '%', '#/student/data') +
@@ -716,6 +726,11 @@
       subjectName: subjectName,
       difficultyName: difficultyLabel,
       subjectKey: subjectKey,
+      runner: equippedPartnerId(),
+      partnerName: partnerMeta(equippedPartnerId()).name,
+      partnerLevel: partnerLevel(equippedPartnerId()),
+      coinBonusPct: partnerBonus(equippedPartnerId()).coin,
+      scoreBonusPct: partnerBonus(equippedPartnerId()).score,
       seed: Date.now() % 100000,
       onEvent: function (ev) {
         if (ev.type === 'notice') toast(ev.message);
@@ -809,6 +824,8 @@
             '<span class="badge">' + typeName(q.type) + ' · ' + esc(q.chapter || '') + '</span>' +
           '</div>' +
           '<div style="font-weight:700;line-height:1.65;font-size:14.5px">' + esc(q.content) + '</div>' +
+          (q.image ? '<img class="q-image" src="' + esc(q.image) + '" alt="题目配图">' : '') +
+          (q.link && q.link.url ? '<a class="q-link" href="' + esc(q.link.url) + '" target="_blank" rel="noopener">🔗 ' + esc(q.link.title || '参考资料') + '</a>' : '') +
           (q.options && q.options.length ? '<div class="muted" style="font-size:12.5px;margin-top:8px">' + q.options.map(function (o, i) { return String.fromCharCode(65 + i) + '. ' + esc(o); }).join('　') + '</div>' : '') +
           '<div class="analysis"><b>正确答案</b>　' + esc(expected.expectedText) + '<br><b>解析</b>　' + esc(q.analysis) + '</div>' +
         '</div>';
@@ -829,6 +846,15 @@
     { id: 'partner-dino', type: 'partner', name: '小恐龙', art: '🦖', price: 300, rarity: 'rare', desc: '冲刺时尾巴会发光' },
     { id: 'partner-rocket', type: 'partner', name: '火箭背包', art: '🚀', price: 600, rarity: 'epic', desc: '跳跃高度 +10%（外观）' },
     { id: 'partner-unicorn', type: 'partner', name: '彩虹独角兽', art: '🦄', price: 1200, rarity: 'legend', desc: '全学科积分 +5%（外观）' },
+    { id: 'deco-plant', type: 'deco', name: '绿植盆栽', art: '🪴', price: 120, rarity: 'common', desc: '给房间添一点生机' },
+    { id: 'deco-lamp', type: 'deco', name: '星星台灯', art: '💡', price: 180, rarity: 'common', desc: '夜里一闪一闪的' },
+    { id: 'deco-rug', type: 'deco', name: '彩虹地毯', art: '🌈', price: 200, rarity: 'rare', desc: '踩上去软软的' },
+    { id: 'deco-cake', type: 'deco', name: '奖励蛋糕', art: '🍰', price: 240, rarity: 'rare', desc: '庆祝每一次进步' },
+    { id: 'deco-sofa', type: 'deco', name: '云朵沙发', art: '🛋️', price: 260, rarity: 'rare', desc: '坐上去会陷进去' },
+    { id: 'deco-books', type: 'deco', name: '小书架', art: '📚', price: 300, rarity: 'rare', desc: '摆满你喜欢的书' },
+    { id: 'deco-fish', type: 'deco', name: '小水族箱', art: '🐠', price: 420, rarity: 'epic', desc: '小鱼会吐泡泡' },
+    { id: 'deco-game', type: 'deco', name: '游戏机', art: '🎮', price: 520, rarity: 'epic', desc: '休息一下再学习' },
+    { id: 'deco-window', type: 'deco', name: '星空落地窗', art: '🪟', price: 660, rarity: 'legend', desc: '抬头就能看见星星' },
     { id: 'badge-math', type: 'badge', name: '数学小达人', art: '📐', price: 200, rarity: 'rare', desc: '数学连对 10 题解锁' },
     { id: 'badge-storm', type: 'badge', name: '连击风暴', art: '⚡', price: 400, rarity: 'epic', desc: '单局连击 ×8 解锁' },
     { id: 'badge-champion', type: 'badge', name: '榜单冠军', art: '🏆', price: 800, rarity: 'legend', desc: '登顶实时榜单解锁' },
@@ -837,33 +863,384 @@
     { id: 'theme-ocean', type: 'theme', name: '深海竞速', art: '🌊', price: 900, rarity: 'epic', desc: '气泡粒子与蓝色赛道' }
   ];
 
+  /* ============================================================
+   * 伙伴（成长 / 出战 / 对话）辅助
+   * ============================================================ */
+  var PARTNER_META = {
+    'partner-cat': { name: '汤姆', emoji: '🐱', tag: '温柔机灵', color: '#f59e0b' },
+    'partner-dino': { name: '阿古', emoji: '🦖', tag: '憨憨可靠', color: '#22c55e' },
+    'partner-rocket': { name: '小火箭', emoji: '🚀', tag: '元气满满', color: '#ef524d' },
+    'partner-unicorn': { name: '彩虹', emoji: '🦄', tag: '梦幻温柔', color: '#a855f7' }
+  };
+  function partnerMeta(id) { return PARTNER_META[id] || PARTNER_META['partner-cat']; }
+  function partnerLevel(id) {
+    var rec = (S.partners || {})[id];
+    return (rec && Number(rec.level)) || 1;
+  }
+  function partnerBonus(id) {
+    var lv = partnerLevel(id);
+    return { coin: (lv - 1) * 4, score: (lv - 1) * 3, level: lv };
+  }
+  function upgradeCost(level) { return 150 + (level - 1) * 120; }
+  function ownedPartners() {
+    return SHOP.filter(function (it) {
+      return it.type === 'partner' && S.inventory.indexOf(it.id) !== -1;
+    });
+  }
+  function equippedPartnerId() {
+    var id = S.equipped && S.equipped.partner;
+    return PARTNER_META[id] ? id : 'partner-cat';
+  }
+  function homeDecoSlots() { return 8; }
+  function placedDeco() { return (S.home && S.home.placed) || []; }
+
+  var RARITY_CN = { common: '普通', rare: '稀有', epic: '史诗', legend: '传说' };
+  function decoById(id) { return SHOP.filter(function (x) { return x.id === id; })[0] || null; }
+
+  function shopSection(type, label, emoji) {
+    var html = '<section class="card" style="margin-top:18px"><div class="card-title"><span class="emoji">' + emoji + '</span>' + label + '</div><div class="grid grid-4">';
+    SHOP.filter(function (it) { return it.type === type; }).forEach(function (it) {
+      var owned = S.inventory.indexOf(it.id) !== -1;
+      var equipped = S.equipped[type] === it.id;
+      html += '<div class="shop-item' + (owned ? ' owned' : '') + '">' +
+        '<div class="shop-art">' + it.art + '</div>' +
+        '<div><b>' + it.name + '</b><div class="lb-sub" style="margin-top:4px">' + it.desc + '</div></div>' +
+        '<span class="rarity ' + it.rarity + '">' + RARITY_CN[it.rarity] + '</span>' +
+        (owned
+          ? '<button class="btn ' + (equipped ? 'btn-ghost' : 'btn-accent') + ' btn-sm btn-block" data-action="equip" data-id="' + it.id + '" data-type="' + type + '"' + (equipped ? ' disabled' : '') + '>' + (equipped ? '已装备' : '装备') + '</button>'
+          : '<button class="btn btn-secondary btn-sm btn-block" data-action="buy" data-id="' + it.id + '">🪙 ' + it.price + ' 金币</button>') +
+      '</div>';
+    });
+    return html + '</div></section>';
+  }
+
   function viewGarden() {
+    var partId = equippedPartnerId();
+    var pm = partnerMeta(partId);
+    var bonus = partnerBonus(partId);
+    var lv = partnerLevel(partId);
     var html = '<div class="fade-in">';
+
     html += '<section class="profile-card" style="background:linear-gradient(120deg,#f49d25,#f5b551 45%,#28bd66 130%)">' +
-      '<div class="row between">' +
+      '<div class="row between wrap" style="gap:12px">' +
         '<div><h2 style="font-size:22px;font-weight:900">🏡 我的家园</h2>' +
-        '<p style="opacity:.92;font-size:13px;margin-top:6px">用闯关获得的金币兑换伙伴、徽章与赛道主题</p></div>' +
-        '<div style="text-align:right"><div style="font-size:30px;font-weight:900">' + fmt(S.coins) + '</div><span style="font-size:12px;opacity:.9">金币余额</span></div>' +
+        '<p style="opacity:.94;font-size:13px;margin-top:6px">答题赚金币 → 给伙伴升级 → 装饰你们的家</p></div>' +
+        '<div class="row" style="gap:14px;align-items:center">' +
+          '<div style="text-align:right"><div style="font-size:28px;font-weight:900">' + fmt(S.coins) + '</div><span style="font-size:12px;opacity:.9">金币余额</span></div>' +
+          '<button class="btn btn-primary" data-go="#/student/chat">💬 和伙伴聊天</button>' +
+        '</div>' +
       '</div></section>';
 
-    ['partner', 'badge', 'theme'].forEach(function (type) {
-      var label = type === 'partner' ? '伙伴' : type === 'badge' ? '徽章' : '主题';
-      html += '<section class="card" style="margin-top:18px"><div class="card-title"><span class="emoji">🎁</span>' + label + '</div><div class="grid grid-4">';
-      SHOP.filter(function (it) { return it.type === type; }).forEach(function (it) {
-        var owned = S.inventory.indexOf(it.id) !== -1;
-        var equipped = S.equipped[type] === it.id;
-        html += '<div class="shop-item' + (owned ? ' owned' : '') + '">' +
-          '<div class="shop-art">' + it.art + '</div>' +
-          '<div><b>' + it.name + '</b><div class="lb-sub" style="margin-top:4px">' + it.desc + '</div></div>' +
-          '<span class="rarity ' + it.rarity + '">' + ({ common: '普通', rare: '稀有', epic: '史诗', legend: '传说' })[it.rarity] + '</span>' +
-          (owned
-            ? '<button class="btn ' + (equipped ? 'btn-ghost' : 'btn-accent') + ' btn-sm btn-block" data-action="equip" data-id="' + it.id + '" data-type="' + type + '"' + (equipped ? ' disabled' : '') + '>' + (equipped ? '已装备' : '装备') + '</button>'
-            : '<button class="btn btn-secondary btn-sm btn-block" data-action="buy" data-id="' + it.id + '">🪙 ' + it.price + ' 金币</button>') +
-        '</div>';
-      });
-      html += '</div></section>';
-    });
+    // 房间场景
+    var placed = placedDeco();
+    var slots = [];
+    for (var i = 0; i < homeDecoSlots(); i++) {
+      var item = placed.filter(function (p) { return p.slot === i; })[0];
+      var def = item ? decoById(item.id) : null;
+      slots.push('<div class="home-slot' + (def ? ' filled' : '') + '">' +
+        (def ? '<span class="home-deco" title="' + esc(def.name) + '">' + def.art + '</span>' +
+          '<button class="home-slot-x" data-action="remove-deco" data-slot="' + i + '" title="收起">×</button>'
+          : '<span class="home-slot-hint">空位</span>') +
+      '</div>');
+    }
+    html += '<section class="card" style="margin-top:18px">' +
+      '<div class="card-title"><span class="emoji">🛋️</span>你们的家 <span class="card-sub">已摆放 ' + placed.length + ' / ' + homeDecoSlots() + ' 件</span></div>' +
+      '<div class="home-room">' +
+        '<div class="home-wall"></div>' +
+        '<div class="home-slots">' + slots.join('') + '</div>' +
+        '<div class="home-partner">' +
+          '<div class="home-partner-art">' + pm.emoji + '</div>' +
+          '<div class="home-partner-plate"><b>' + esc(pm.name) + '</b> · Lv' + lv +
+            ' <span class="lb-sub">金币 +' + bonus.coin + '% · 分数 +' + bonus.score + '%</span></div>' +
+          '<div class="home-partner-say" id="partnerSay">“' + esc(pm.name) + '在等你一起去跑酷～”</div>' +
+        '</div>' +
+      '</div>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:10px">提示：买下摆件会自动放进空位；点摆件右上角的 × 可以收起，再买一件就能换位置。</p>' +
+    '</section>';
+
+    // 伙伴成长
+    var owned = ownedPartners();
+    html += '<section class="card" style="margin-top:18px">' +
+      '<div class="card-title"><span class="emoji">🐾</span>伙伴成长 <span class="card-sub">升级后一起跑酷金币更多</span></div>' +
+      '<div class="partner-grid">' +
+        owned.map(function (p) {
+          var meta = partnerMeta(p.id);
+          var l = partnerLevel(p.id);
+          var b = partnerBonus(p.id);
+          var isOn = p.id === partId;
+          var cost = upgradeCost(l);
+          var maxed = l >= 10;
+          return '<div class="partner-card' + (isOn ? ' on' : '') + '">' +
+            '<div class="partner-art" style="background:linear-gradient(140deg,#fff,' + meta.color + '22)">' + meta.emoji + '</div>' +
+            '<div class="row between" style="margin-top:10px"><b>' + esc(meta.name) + '</b><span class="badge">Lv' + l + '</span></div>' +
+            '<div class="lb-sub" style="margin-top:4px">' + meta.tag + ' · 金币 +' + b.coin + '% · 分数 +' + b.score + '%</div>' +
+            '<div class="bar-track" style="margin-top:8px"><div class="bar-fill" style="width:' + (l / 10 * 100) + '%"></div></div>' +
+            '<div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">' +
+              (isOn
+                ? '<button class="btn btn-ghost btn-sm grow" disabled>出战中</button>'
+                : '<button class="btn btn-accent btn-sm grow" data-action="equip" data-id="' + p.id + '" data-type="partner">出战</button>') +
+              (maxed
+                ? '<button class="btn btn-ghost btn-sm grow" disabled>已满级</button>'
+                : '<button class="btn btn-secondary btn-sm grow" data-action="upgrade-partner" data-id="' + p.id + '">⬆ 升级 🪙' + cost + '</button>') +
+              '<button class="btn btn-ghost btn-sm" data-action="chat-partner" data-id="' + p.id + '">💬</button>' +
+            '</div>' +
+          '</div>';
+        }).join('') +
+      '</div>' +
+    '</section>';
+
+    // 伙伴商店（还没买的）
+    var unowned = SHOP.filter(function (it) { return it.type === 'partner' && S.inventory.indexOf(it.id) === -1; });
+    if (unowned.length) {
+      html += '<section class="card" style="margin-top:18px">' +
+        '<div class="card-title"><span class="emoji">🛒</span>伙伴商店 <span class="card-sub">买下就能出战、也能陪聊</span></div>' +
+        '<div class="grid grid-4">' +
+          unowned.map(function (it) {
+            var meta = partnerMeta(it.id);
+            return '<div class="shop-item">' +
+              '<div class="shop-art">' + it.art + '</div>' +
+              '<div><b>' + it.name + '</b><div class="lb-sub" style="margin-top:4px">' + meta.tag + '</div></div>' +
+              '<span class="rarity ' + it.rarity + '">' + RARITY_CN[it.rarity] + '</span>' +
+              '<button class="btn btn-secondary btn-sm btn-block" data-action="buy" data-id="' + it.id + '">🪙 ' + it.price + ' 金币</button>' +
+            '</div>';
+          }).join('') +
+        '</div>' +
+      '</section>';
+    }
+
+    // 摆件商店
+    html += '<section class="card" style="margin-top:18px">' +
+      '<div class="card-title"><span class="emoji">🧸</span>家园摆件 <span class="card-sub">买下即自动摆放</span></div>' +
+      '<div class="grid grid-4">' +
+        SHOP.filter(function (it) { return it.type === 'deco'; }).map(function (it) {
+          var count = placed.filter(function (p) { return p.id === it.id; }).length;
+          var full = placed.length >= homeDecoSlots();
+          return '<div class="shop-item">' +
+            '<div class="shop-art">' + it.art + '</div>' +
+            '<div><b>' + it.name + '</b><div class="lb-sub" style="margin-top:4px">' + it.desc + (count ? ' · 已摆 ' + count + ' 件' : '') + '</div></div>' +
+            '<span class="rarity ' + it.rarity + '">' + RARITY_CN[it.rarity] + '</span>' +
+            '<button class="btn btn-secondary btn-sm btn-block" data-action="buy-deco" data-id="' + it.id + '"' + (full ? ' disabled' : '') + '>' +
+              (full ? '位置已满' : '🪙 ' + it.price) + '</button>' +
+          '</div>';
+        }).join('') +
+      '</div>' +
+    '</section>';
+
+    html += shopSection('badge', '徽章', '🏅');
+    html += shopSection('theme', '赛道主题', '🌌');
     return html + '</div>';
+  }
+
+  /* ============================================================
+   * 伙伴聊天（本地陪伴模式 + 可选接入大模型）
+   * ============================================================ */
+  var chatState = { brain: null, brainId: '', chips: [], sending: false };
+
+  function chatCtx() {
+    var partId = equippedPartnerId();
+    var me = myPoints();
+    var weak = null, worst = 101;
+    PK.SUBJECTS.forEach(function (s) {
+      var st = S.stats[s.key];
+      if (!st || !st.answered) return;
+      var rate = Math.round((st.correct / st.answered) * 100);
+      if (rate < worst) { worst = rate; weak = s.name; }
+    });
+    return {
+      userName: S.user.name,
+      coins: S.coins,
+      level: partnerLevel(partId),
+      points: me ? me.score : 0,
+      rank: me ? me.rank : 0,
+      wrongCount: S.wrongIds.length,
+      subject: ui.subject,
+      subjectName: PK.subjectByKey(ui.subject).name,
+      weakSubject: weak,
+      homeworkCount: homeworkForMe().length,
+      customQuestions: S.customQuestions || [],
+      accuracy: accuracy(),
+      partnerId: partId
+    };
+  }
+  function chatBrain() {
+    var id = equippedPartnerId();
+    if (!chatState.brain || chatState.brainId !== id) {
+      chatState.brain = window.PKChat.create(id, chatCtx);
+      chatState.brainId = id;
+    }
+    return chatState.brain;
+  }
+  function chatMessages(id) {
+    if (!S.chat) S.chat = {};
+    if (!S.chat[id]) S.chat[id] = [];
+    return S.chat[id];
+  }
+  function chatPush(partnerId, who, text) {
+    var list = chatMessages(partnerId);
+    list.push({ who: who, text: String(text), at: Date.now() });
+    if (list.length > 40) list.splice(0, list.length - 40);
+    save();
+  }
+  function chatModeLabel() {
+    if (S.aiConfig && S.aiConfig.endpoint) return '已接入大模型';
+    if (window.ai && window.ai.languageModel) return '浏览器内置模型';
+    return '本地陪伴模式';
+  }
+  function chatListHtml(partnerId) {
+    var pm = partnerMeta(partnerId);
+    var list = chatMessages(partnerId);
+    if (!list.length) {
+      return '<div class="chat-empty">' + pm.emoji + '<div>点下面的按钮，或直接说点什么，' + esc(pm.name) + '就会回应你～</div></div>';
+    }
+    return list.map(function (m) {
+      var body = esc(m.text).replace(/\n/g, '<br>');
+      return m.who === 'me'
+        ? '<div class="chat-msg me"><div class="chat-bubble">' + body + '</div></div>'
+        : '<div class="chat-msg ai"><div class="chat-mini-avatar">' + pm.emoji + '</div><div class="chat-bubble">' + body + '</div></div>';
+    }).join('');
+  }
+  function chatChipsHtml() {
+    var chips = chatState.chips && chatState.chips.length ? chatState.chips : ['给我出道题', '讲个笑话', '今天学什么', '鼓励我一下'];
+    return chips.map(function (c) {
+      return '<button class="chat-chip" data-action="chat-chip" data-text="' + esc(c) + '">' + esc(c) + '</button>';
+    }).join('');
+  }
+  function viewChat() {
+    var partId = equippedPartnerId();
+    var pm = partnerMeta(partId);
+    var lv = partnerLevel(partId);
+    if (!chatMessages(partId).length) {
+      var welcome = chatBrain().greet();
+      chatPush(partId, 'ai', welcome.text);
+      chatState.chips = welcome.chips;
+    }
+    return '<div class="fade-in chat-page">' +
+      '<div class="row between wrap" style="gap:12px;margin-bottom:14px">' +
+        '<div class="row" style="gap:12px">' +
+          '<div class="chat-avatar">' + pm.emoji + '</div>' +
+          '<div><h2 style="font-size:19px;font-weight:900">' + esc(pm.name) + ' <span class="badge">Lv' + lv + '</span></h2>' +
+          '<p class="muted" style="font-size:12.5px;margin-top:3px">' + esc(pm.tag) + ' · ' + chatModeLabel() + '</p></div>' +
+        '</div>' +
+        '<div class="row" style="gap:8px;flex-wrap:wrap">' +
+          '<button class="btn btn-ghost btn-sm" data-action="ai-config">⚙ AI 设置</button>' +
+          '<button class="btn btn-ghost btn-sm" data-action="clear-chat">清空对话</button>' +
+          '<button class="btn btn-ghost btn-sm" data-go="#/student/game/' + ui.subject + '/' + ui.difficulty + '">🏃 去跑酷</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="chat-box">' +
+        '<div class="chat-list" id="chatList">' + chatListHtml(partId) + '</div>' +
+        '<div class="chat-chips" id="chatChips">' + chatChipsHtml() + '</div>' +
+        '<div class="chat-input-row">' +
+          '<input class="input" id="chatInput" placeholder="和' + esc(pm.name) + '说点什么…" autocomplete="off" maxlength="200">' +
+          '<button class="btn btn-primary" data-action="chat-send">发送</button>' +
+        '</div>' +
+      '</div>' +
+      '<p class="muted chat-tip">本地陪伴模式不需要联网，可以出题、讲题、鼓励你；如果想让伙伴像豆包一样自由对话，点右上角「AI 设置」填一个你自己的大模型接口即可。</p>' +
+    '</div>';
+  }
+  function renderChatOnly() {
+    var partId = equippedPartnerId();
+    var listEl = $('#chatList');
+    if (listEl) listEl.innerHTML = chatListHtml(partId);
+    var chipsEl = $('#chatChips');
+    if (chipsEl) chipsEl.innerHTML = chatChipsHtml();
+    if (listEl) listEl.scrollTop = listEl.scrollHeight;
+  }
+  function scrollChatToEnd() {
+    var listEl = $('#chatList');
+    if (listEl) listEl.scrollTop = listEl.scrollHeight;
+  }
+  function chatFinish(partnerId, reply) {
+    chatPush(partnerId, 'ai', reply.text);
+    chatState.chips = reply.chips || [];
+    renderChatOnly();
+  }
+  function chatSend(text) {
+    text = String(text || '').trim();
+    if (!text) return;
+    var partId = equippedPartnerId();
+    chatPush(partId, 'me', text);
+    chatState.chips = [];
+    renderChatOnly();
+    var cfg = S.aiConfig;
+    if (cfg && cfg.endpoint) {
+      chatState.sending = true;
+      askRemoteModel(cfg, text).then(function (out) {
+        chatState.sending = false;
+        if (out) chatFinish(partId, { text: out, chips: ['给我出道题', '讲个笑话'] });
+        else chatFinish(partId, chatBrain().reply(text));
+      }).catch(function () {
+        chatState.sending = false;
+        var r = chatBrain().reply(text);
+        r.text = '（大模型暂时连不上，先用本地陪伴模式回答你）\n' + r.text;
+        chatFinish(partId, r);
+      });
+      return;
+    }
+    setTimeout(function () { chatFinish(partId, chatBrain().reply(text)); }, 140);
+  }
+  function askRemoteModel(cfg, text) {
+    var partId = equippedPartnerId();
+    var pm = partnerMeta(partId);
+    var history = chatMessages(partId).slice(-10).map(function (m) {
+      return { role: m.who === 'me' ? 'user' : 'assistant', content: m.text };
+    });
+    var c = chatCtx();
+    var sys = '你是中小学生的成长伙伴「' + pm.name + '」（' + pm.tag + '）。' +
+      '语气亲切、简短（每次不超过 120 字），多用鼓励，遇到知识问题要讲清楚思路，不要直接给答案。' +
+      '学生叫' + (c.userName || '小明') + '，当前 ' + (c.points || 0) + ' 分、金币 ' + (c.coins || 0) + '，伙伴等级 Lv' + (c.level || 1) + '。';
+    var timeout = new Promise(function (_, reject) { setTimeout(function () { reject(new Error('timeout')); }, 25000); });
+    return Promise.race([
+      fetch(cfg.endpoint, {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, cfg.key ? { Authorization: 'Bearer ' + cfg.key } : {}),
+        body: JSON.stringify({ model: cfg.model || 'gpt-4o-mini', messages: [{ role: 'system', content: sys }].concat(history), temperature: 0.8 })
+      }).then(function (r) { return r.json(); }),
+      timeout
+    ]).then(function (j) {
+      if (!j) return '';
+      if (j.choices && j.choices[0]) {
+        var msg = j.choices[0].message || {};
+        return msg.content || j.choices[0].text || '';
+      }
+      if (j.reply) return String(j.reply);
+      if (j.message && typeof j.message === 'string') return j.message;
+      return '';
+    });
+  }
+  function openAiConfig() {
+    var cfg = S.aiConfig || {};
+    var wrap = overlay(
+      '<div class="row between"><h3 class="modal-title">⚙ AI 设置</h3><button class="btn btn-ghost btn-sm" data-close>关闭</button></div>' +
+      '<p class="muted modal-sub">默认「本地陪伴模式」不联网也能聊天、出题、讲题。若想让伙伴像豆包一样自由对话，可填入一个 <b>OpenAI 兼容</b>的接口（自建服务、代理或云厂商均可）。密钥只保存在你自己的浏览器里，不会上传到本站。</p>' +
+      '<div class="form-field"><label>接口地址（chat/completions）</label><input class="input" id="aiEndpoint" placeholder="https://api.openai.com/v1/chat/completions" value="' + esc(cfg.endpoint || '') + '"></div>' +
+      '<div class="grid grid-2">' +
+        '<div class="form-field"><label>模型名</label><input class="input" id="aiModel" placeholder="gpt-4o-mini / doubao-pro / qwen-plus…" value="' + esc(cfg.model || '') + '"></div>' +
+        '<div class="form-field"><label>密钥（可留空）</label><input class="input" id="aiKey" type="password" placeholder="sk-..." value="' + esc(cfg.key || '') + '"></div>' +
+      '</div>' +
+      '<div id="aiMsg" class="muted modal-sub"></div>' +
+      '<div class="row" style="gap:10px"><button class="btn btn-primary grow" id="aiSave">保存并启用</button>' +
+      '<button class="btn btn-ghost" id="aiClear">改回本地模式</button></div>'
+    );
+    wrap.querySelector('[data-close]').onclick = function () { wrap.remove(); };
+    wrap.querySelector('#aiSave').onclick = function () {
+      var endpoint = wrap.querySelector('#aiEndpoint').value.trim();
+      var model = wrap.querySelector('#aiModel').value.trim();
+      var key = wrap.querySelector('#aiKey').value.trim();
+      if (!endpoint) { wrap.querySelector('#aiMsg').innerHTML = '<span class="bad">请填写接口地址</span>'; return; }
+      S.aiConfig = { endpoint: endpoint, model: model, key: key };
+      save();
+      wrap.remove();
+      toast('已启用大模型对话（如失败会自动切回本地陪伴）', 'ok');
+      render();
+    };
+    wrap.querySelector('#aiClear').onclick = function () {
+      S.aiConfig = null;
+      save();
+      wrap.remove();
+      toast('已改回本地陪伴模式');
+      render();
+    };
   }
 
   /* ============================================================
@@ -1133,7 +1510,8 @@
               '<div class="hw-emoji">' + (h.status === 'closed' ? '🗄️' : h.status === 'draft' ? '📄' : '📌') + '</div>' +
               '<div class="grow"><b>' + esc(h.title) + '</b>' +
                 '<div class="lb-sub">' + esc(h.className || '未指定班级') + ' · ' + (h.questionIds || []).length + ' 道题 · ' +
-                  (h.due ? '截止 ' + esc(h.due) : '长期有效') + ' · 已交 ' + done + (total ? '/' + total : '') + ' 人</div>' +
+                  (h.due ? '截止 ' + esc(h.due) : '长期有效') + ' · 已交 ' + done + (total ? '/' + total : '') + ' 人' +
+                  (h.image ? ' · 📷' : '') + (h.link ? ' · 🔗' : '') + '</div>' +
               '</div>' +
               '<span class="badge ' + (h.status === 'open' ? 'live' : '') + '">' +
                 (h.status === 'open' ? '进行中' : h.status === 'closed' ? '已结束' : '待发布') + '</span>' +
@@ -1185,7 +1563,8 @@
           '<td>' + subj.emoji + ' ' + subj.name + '</td>' +
           '<td>' + typeName(q.type) + '</td>' +
           '<td><span class="badge ' + q.difficulty + '">' + difficultyName(q.difficulty) + '</span></td>' +
-          '<td style="max-width:320px">' + esc(String(q.content).slice(0, 42)) + (String(q.content).length > 42 ? '…' : '') + '</td>' +
+          '<td style="max-width:320px">' + esc(String(q.content).slice(0, 42)) + (String(q.content).length > 42 ? '…' : '') +
+            (q.image ? ' <span title="含配图">📷</span>' : '') + (q.link ? ' <span title="含参考链接">🔗</span>' : '') + '</td>' +
           '<td><b>' + esc(res.expectedText) + '</b></td>' +
           '<td><span class="ok">✓ 通过</span></td>' +
           '<td>' + (q.source && q.source.indexOf('自定义') === -1 && q.id.indexOf('custom') === -1
@@ -1370,6 +1749,7 @@
       else if (seg[1] === 'wrong') html = viewWrong();
       else if (seg[1] === 'garden') html = viewGarden();
       else if (seg[1] === 'data') html = viewData();
+      else if (seg[1] === 'chat') html = viewChat();
       else html = viewStudent();
     } else if (seg[0] === 'leaderboard') html = viewLeaderboard();
     else if (seg[0] === 'guide') html = viewGuide();
@@ -1380,6 +1760,20 @@
 
     if (!crossRole && seg[0] === 'student' && seg[1] === 'game') mountGame();
     if (!crossRole && seg[0] === 'student' && seg[1] === 'join') openJoinClass(seg[2]);
+    if (!crossRole && seg[0] === 'student' && seg[1] === 'chat') {
+      var chatPid = equippedPartnerId();
+      if (!chatMessages(chatPid).length) {
+        var greeting = chatBrain().greet();
+        chatPush(chatPid, 'ai', greeting.text);
+        chatState.chips = greeting.chips;
+      }
+      requestAnimationFrame(function () {
+        renderChatOnly();
+        scrollChatToEnd();
+        var inp = $('#chatInput');
+        if (inp) inp.focus();
+      });
+    }
     if (!crossRole && seg[0] === 'teacher' && ui.teacherTab === 'race') {
       var board = $('#raceBoard');
       if (board && raceState && raceState.running) board.innerHTML = raceBoardHtml();
@@ -1551,8 +1945,14 @@
         if (S.coins < item.price) { toast('金币不足，还差 ' + (item.price - S.coins) + ' 金币', 'bad'); break; }
         S.coins -= item.price;
         S.inventory.push(item.id);
+        if (item.type === 'partner') {
+          S.partners = S.partners || {};
+          if (!S.partners[item.id]) S.partners[item.id] = { level: 1 };
+        }
         save();
-        toast('购买成功！获得「' + item.name + '」', 'ok');
+        toast(item.type === 'partner'
+          ? '买下「' + item.name + '」！现在可以出战，也能陪你聊天'
+          : '购买成功！获得「' + item.name + '」', 'ok');
         confetti(40);
         render();
         break;
@@ -1644,6 +2044,75 @@
         render();
         toast('已退出，可切换账号重新进入');
         break;
+      case 'upgrade-partner': {
+        var upId = actionEl.getAttribute('data-id');
+        var curLv = partnerLevel(upId);
+        if (curLv >= 10) { toast('已经是满级啦，超厉害！', 'ok'); break; }
+        var cost = upgradeCost(curLv);
+        if (S.coins < cost) { toast('金币不足，还差 ' + (cost - S.coins) + ' 金币（去答题赚金币吧）', 'bad'); break; }
+        S.coins -= cost;
+        S.partners = S.partners || {};
+        S.partners[upId] = { level: curLv + 1 };
+        save();
+        confetti(50);
+        toast(partnerMeta(upId).name + ' 升到 Lv' + (curLv + 1) + '！金币 +' + partnerBonus(upId).coin + '%', 'ok');
+        render();
+        break;
+      }
+      case 'buy-deco': {
+        var dId = actionEl.getAttribute('data-id');
+        var deco = decoById(dId);
+        if (!deco) break;
+        if (placedDeco().length >= homeDecoSlots()) { toast('房间位置满了，先收起一件吧', 'bad'); break; }
+        if (S.coins < deco.price) { toast('金币不足，还差 ' + (deco.price - S.coins) + ' 金币', 'bad'); break; }
+        S.coins -= deco.price;
+        var usedSlots = placedDeco().map(function (p) { return p.slot; });
+        var freeSlot = 0;
+        while (usedSlots.indexOf(freeSlot) !== -1) freeSlot++;
+        S.home = S.home || { placed: [] };
+        S.home.placed.push({ id: dId, slot: freeSlot });
+        save();
+        confetti(40);
+        toast('已把「' + deco.name + '」摆进家园', 'ok');
+        render();
+        break;
+      }
+      case 'remove-deco': {
+        var slotNo = parseInt(actionEl.getAttribute('data-slot'), 10);
+        S.home = S.home || { placed: [] };
+        S.home.placed = placedDeco().filter(function (p) { return p.slot !== slotNo; });
+        save();
+        toast('已收起');
+        render();
+        break;
+      }
+      case 'chat-partner': {
+        var cid = actionEl.getAttribute('data-id');
+        if (cid && PARTNER_META[cid]) { S.equipped.partner = cid; save(); }
+        chatState.brain = null;
+        location.hash = '#/student/chat';
+        render();
+        break;
+      }
+      case 'chat-chip':
+        chatSend(actionEl.getAttribute('data-text'));
+        break;
+      case 'chat-send': {
+        var chatInput = $('#chatInput');
+        if (chatInput) { var v = chatInput.value; chatInput.value = ''; chatSend(v); }
+        break;
+      }
+      case 'ai-config':
+        openAiConfig();
+        break;
+      case 'clear-chat':
+        S.chat = S.chat || {};
+        S.chat[equippedPartnerId()] = [];
+        chatState.brain = null;
+        save();
+        toast('对话已清空');
+        render();
+        break;
       case 'open-guide':
         openGuide();
         break;
@@ -1730,6 +2199,16 @@
     else if (action === 'filter-subject') { ui.questionFilter.subject = el.value; render(); }
     else if (action === 'filter-type') { ui.questionFilter.type = el.value; render(); }
     else if (action === 'filter-difficulty') { ui.questionFilter.difficulty = el.value; render(); }
+  });
+
+  // 聊天输入框回车发送
+  document.addEventListener('keydown', function (e) {
+    if (e.target && e.target.id === 'chatInput' && e.key === 'Enter') {
+      e.preventDefault();
+      var v = e.target.value;
+      e.target.value = '';
+      chatSend(v);
+    }
   });
 
   function download(filename, content) {
@@ -1865,6 +2344,9 @@
       { e: '🧑‍🎓', who: '学生', t: '用班级码加入班级', d: '进入「学生端」，点右上角「加入班级」，输入老师给的 4 位数字班级码。加入后你的积分会算进这个班级。' },
       { e: '🏃', who: '学生', t: '跑酷闯关答题', d: '在「学生端」选学科与难度，点「开始闯关」。三跑道跑酷：撞到建筑才会弹出题目，答对让建筑爆出金币（题目越难金币越多），答错扣 1 点生命并自动收录错题；换道或跳跃躲开建筑就不会出题。每个学科一套专属场景，键盘 ←/→ 换道、空格跳跃，手机左右滑动换道。' },
       { e: '📝', who: '老师', t: '从题库发布作业', d: '进入「教师端 → 作业管理 → 发布作业」，填标题、选班级，再从题库中勾选题目组成作业。需要新题请先到「题库管理 → 新增题目」，保存后即可选中——作业题目统一来自题库，无需另外上传。' },
+      { e: '📷', who: '老师', t: '题目和作业可以带图片、链接', d: '新增题目或发布作业时，可以上传图片（也可直接粘图片网址），还能附上参考网页链接；学生答题时会看到图和可点开的资料。' },
+      { e: '🐾', who: '学生', t: '伙伴成长与家园布置', d: '答题赚金币 → 在「我的家园」买伙伴、给伙伴升级（每级金币 +4%、分数 +3%），还能买摆件布置你们的房间。出战哪个伙伴，跑酷游戏里跑的就是它。' },
+      { e: '💬', who: '学生', t: '和伙伴聊天', d: '点「学生端 → 伙伴」或家园里的「和伙伴聊天」，可以让它出题、讲题、讲笑话、讲故事、陪你聊心情。默认本地陪伴模式不用联网；想更自由对话，可在「AI 设置」里填自己的大模型接口。' },
       { e: '🧯', who: '学生', t: '错题修复与作业', d: '答错的题会自动进入「错题修复」，答对后自动移出。老师布置的作业会出现在「学生端 → 待完成作业」，点「去完成」即可作答。' },
       { e: '🏆', who: '全员', t: '实时积分榜单', d: '每次答题的积分都会实时计入榜单，支持今日 / 本周 / 总榜与分学科筛选，含前三名领奖台与实时动态。把网址发给同学，多台设备打开即可同屏竞技。' },
       { e: '📊', who: '老师', t: '学情分析与课堂竞速', d: '「班级学情」查看今日学生积分排行并可一键导出成绩；「课堂竞速」让全班同屏 PK；「答案判定引擎」可查看判分自检与逐题对比。' },
@@ -1928,6 +2410,14 @@
         '<div class="form-field"><label>截止日期（可留空）</label><input class="input" id="hwDue" type="date"></div>' +
         '<div class="form-field"><label>作业说明（可留空）</label><input class="input" id="hwNote" placeholder="例如：放学前完成"></div>' +
       '</div>' +
+      '<div class="grid grid-2">' +
+        '<div class="form-field"><label>作业配图（可选 · 上传图片 / 拍照）</label>' +
+          '<input class="input" type="file" id="hwImage" accept="image/*"><div id="hwImagePreview"></div>' +
+          '<input class="input" id="hwImageUrl" style="margin-top:8px" placeholder="或粘贴图片网址 https://..."></div>' +
+        '<div class="form-field"><label>参考资料链接（可选 · 分享网页给学生）</label>' +
+          '<div class="grid grid-2"><input class="input" id="hwLinkTitle" placeholder="链接标题，如：微课视频">' +
+          '<input class="input" id="hwLinkUrl" placeholder="https://..."></div></div>' +
+      '</div>' +
       '<div class="picker-bar">' +
         '<select class="select" style="width:auto" id="hwFSubject"><option value="all">全部学科</option>' +
           PK.SUBJECTS.map(function (s) { return '<option value="' + s.key + '">' + s.name + '</option>'; }).join('') + '</select>' +
@@ -1947,6 +2437,21 @@
       '</div>', 840
     );
     wrap.querySelector('[data-close]').onclick = function () { wrap.remove(); };
+
+    var hwImage = '';
+    var hwImageInput = wrap.querySelector('#hwImage');
+    if (hwImageInput) {
+      hwImageInput.onchange = function () {
+        var f = hwImageInput.files && hwImageInput.files[0];
+        if (!f) return;
+        readImageFile(f, function (dataUrl) {
+          hwImage = dataUrl;
+          wrap.querySelector('#hwImagePreview').innerHTML = attachPreviewHtml(dataUrl, f.name);
+          var x = wrap.querySelector('#hwImagePreview .attach-x');
+          if (x) x.onclick = function () { hwImage = ''; wrap.querySelector('#hwImagePreview').innerHTML = ''; hwImageInput.value = ''; };
+        });
+      };
+    }
 
     var listEl = wrap.querySelector('#hwList');
     function filtered() {
@@ -2011,6 +2516,10 @@
         id: uid('hw'),
         title: title.slice(0, 40),
         note: note,
+        image: hwImage || wrap.querySelector('#hwImageUrl').value.trim() || '',
+        link: (wrap.querySelector('#hwLinkUrl').value.trim()
+          ? { title: wrap.querySelector('#hwLinkTitle').value.trim() || '参考资料', url: wrap.querySelector('#hwLinkUrl').value.trim() }
+          : null),
         classId: clsId,
         className: cls ? cls.name : '未指定班级',
         questionIds: ui.hwSelected.slice(),
@@ -2028,11 +2537,46 @@
     };
   }
 
+  /** 读取图片文件并压缩成 dataURL（避免 localStorage 爆掉） */
+  function readImageFile(file, cb) {
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var raw = String(reader.result || '');
+      try {
+        var img = new Image();
+        img.onload = function () {
+          var max = 900;
+          var w = img.width || max, h = img.height || max;
+          if (w > max) { h = Math.round(h * max / w); w = max; }
+          try {
+            var cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            cv.getContext('2d').drawImage(img, 0, 0, w, h);
+            cb(cv.toDataURL('image/jpeg', 0.72));
+          } catch (e) { cb(raw); }
+        };
+        img.onerror = function () { cb(raw); };
+        img.src = raw;
+      } catch (e) { cb(raw); }
+    };
+    reader.onerror = function () { toast('图片读取失败，请换一张试试', 'bad'); };
+    reader.readAsDataURL(file);
+  }
+
+  function attachPreviewHtml(src, name) {
+    if (!src) return '';
+    return '<div class="attach-preview"><img src="' + esc(src) + '" alt="配图"><button type="button" class="attach-x">×</button>' +
+      (name ? '<span class="lb-sub">' + esc(name) + '</span>' : '') + '</div>';
+  }
+
   function showHomeworkPreview(h) {
     var qs = (h.questionIds || []).map(questionById).filter(Boolean);
     var wrap = overlay(
       '<div class="row between"><h3 class="modal-title">' + esc(h.title) + '</h3><button class="btn btn-ghost btn-sm" data-close>关闭</button></div>' +
       '<p class="muted modal-sub">' + esc(h.className || '') + ' · ' + qs.length + ' 道题 · ' + (h.due ? '截止 ' + esc(h.due) : '长期有效') + (h.note ? ' · ' + esc(h.note) : '') + '</p>' +
+      (h.image ? '<img class="q-image" src="' + esc(h.image) + '" alt="作业配图">' : '') +
+      (h.link && h.link.url ? '<a class="q-link" href="' + esc(h.link.url) + '" target="_blank" rel="noopener">🔗 ' + esc(h.link.title || '参考资料') + '</a>' : '') +
       '<div class="picker-list">' + (qs.length ? qs.map(function (q, i) {
         var subj = PK.subjectByKey(q.subject);
         return '<div class="pick-item on"><span class="grow"><b>' + (i + 1) + '. ' + esc(q.content) + '</b>' +
@@ -2065,6 +2609,16 @@
           PK.TYPES.map(function (t) { return '<option value="' + t.key + '">' + t.name + '</option>'; }).join('') + '</select></div>' +
         '<div class="form-field"><label>章节</label><input class="input" id="qfChapter" placeholder="例如：一元二次方程"></div>' +
         '<div class="form-field"><label>题干</label><textarea class="textarea" id="qfContent" placeholder="请输入题干"></textarea></div>' +
+        '<div class="grid grid-2">' +
+          '<div class="form-field"><label>题目配图（可选 · 支持拍照/上传图片）</label>' +
+            '<input class="input" type="file" id="qfImage" accept="image/*">' +
+            '<div id="qfImagePreview"></div></div>' +
+          '<div class="form-field"><label>或粘贴图片网址（可选）</label>' +
+            '<input class="input" id="qfImageUrl" placeholder="https://example.com/pic.png"></div>' +
+        '</div>' +
+        '<div class="form-field"><label>参考资料链接（可选）</label>' +
+          '<div class="grid grid-2"><input class="input" id="qfLinkTitle" placeholder="链接标题，如：知识点讲解">' +
+          '<input class="input" id="qfLinkUrl" placeholder="https://..."></div></div>' +
         '<div id="qfOptions"></div>' +
         '<div class="form-field"><label>正确答案</label><div id="qfAnswerHost"></div></div>' +
         '<div class="form-field"><label>解析</label><textarea class="textarea" id="qfAnalysis" placeholder="请输入题目解析"></textarea></div>' +
@@ -2095,6 +2649,22 @@
     renderOptions();
     typeSel.addEventListener('change', renderOptions);
     $('#qfClose', wrap).onclick = function () { wrap.remove(); };
+
+    // 配图：上传的照片会压缩后保存；也可以直接粘贴图片网址
+    var uploadedImage = '';
+    var imgInput = $('#qfImage', wrap);
+    if (imgInput) {
+      imgInput.onchange = function () {
+        var f = imgInput.files && imgInput.files[0];
+        if (!f) return;
+        readImageFile(f, function (dataUrl) {
+          uploadedImage = dataUrl;
+          $('#qfImagePreview', wrap).innerHTML = attachPreviewHtml(dataUrl, f.name);
+          var x = $('#qfImagePreview .attach-x', wrap);
+          if (x) x.onclick = function () { uploadedImage = ''; $('#qfImagePreview', wrap).innerHTML = ''; imgInput.value = ''; };
+        });
+      };
+    }
 
     $('#qfSave', wrap).onclick = function () {
       var type = typeSel.value;
@@ -2133,6 +2703,10 @@
         accept: accept,
         analysis: $('#qfAnalysis', wrap).value.trim() || '教师自定义题目',
         source: '教师自定义',
+        image: uploadedImage || $('#qfImageUrl', wrap).value.trim() || '',
+        link: ($('#qfLinkUrl', wrap).value.trim()
+          ? { title: $('#qfLinkTitle', wrap).value.trim() || '参考资料', url: $('#qfLinkUrl', wrap).value.trim() }
+          : null),
         verified: true
       };
 
