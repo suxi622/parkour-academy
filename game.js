@@ -102,12 +102,23 @@
     var partnerLevel = Math.max(1, Number(opts.partnerLevel) || 1);
     var coinBonusPct = Math.max(0, Number(opts.coinBonusPct) || 0);
     var scoreBonusPct = Math.max(0, Number(opts.scoreBonusPct) || 0);
+    /* 装备属性（家园里购买的头盔 / 跑鞋 / 护盾 / 磁铁等） */
+    var gear = opts.gear || {};
+    var gearSpeedPct = Math.max(0, Number(gear.speedPct) || 0);
+    var gearJumpPct = Math.max(0, Number(gear.jumpPct) || 0);
+    var gearCoinPct = Math.max(0, Number(gear.coinPct) || 0);
+    var gearScorePct = Math.max(0, Number(gear.scorePct) || 0);
+    var gearExtraLives = Math.max(0, Number(gear.extraLives) || 0);
+    var gearSafeWrong = Math.max(0, Number(gear.safeWrong) || 0);
+    var gearNames = gear.names || [];
 
     var state = {
       phase: 'ready',            // ready | countdown | playing | question | paused | finished
       distance: 0,
-      speed: CFG.BASE_SPEED,
-      lives: CFG.MAX_LIVES,
+      speed: CFG.BASE_SPEED * (1 + gearSpeedPct / 100),
+      speedMul: 1 + gearSpeedPct / 100,
+      lives: CFG.MAX_LIVES + gearExtraLives,
+      shieldCharge: gearSafeWrong,   // 头盔：答错时可免疫扣血的次数
       gold: 0,
       score: 0,
       correct: 0,
@@ -131,6 +142,7 @@
       spawned: 0,
       resolved: 0,
       dodged: 0,
+      missed: 0,                 // 漏做的建筑（没撞上去答题）→ 本关需要重新完成
       planned: questions.length,
       questionPool: questions.slice(),
       activeQuestion: null,
@@ -160,6 +172,7 @@
           '<div class="hud-row" style="align-items:flex-end">' +
             '<div class="hud-chip">速度 <span id="gSpeed">1.0</span>x</div>' +
             '<div class="hud-chip">连击 <span id="gCombo">0</span></div>' +
+            '<div class="hud-chip" id="gMissedChip">漏做 <span id="gMissed">0</span></div>' +
           '</div>' +
         '</div>' +
         '<div class="combo-badge" id="gComboBadge"></div>' +
@@ -186,6 +199,8 @@
     var hudCombo = container.querySelector('#gCombo');
     var hudBar = container.querySelector('#gBar');
     var hudBarText = container.querySelector('#gBarText');
+    var hudMissed = container.querySelector('#gMissed');
+    var hudMissedChip = container.querySelector('#gMissedChip');
     var pauseBtn = container.querySelector('#gPause');
     var fullBtn = container.querySelector('#gFull');
 
@@ -345,7 +360,8 @@
       if (state.phase !== 'playing') return;
 
       state.distance += state.speed * dt;
-      if (state.speed < CFG.MAX_SPEED) state.speed = Math.min(CFG.MAX_SPEED, state.speed + 6 * dt);
+      var maxSpeed = CFG.MAX_SPEED * state.speedMul;
+      if (state.speed < maxSpeed) state.speed = Math.min(maxSpeed, state.speed + 6 * dt);
       state.laneVisual += (state.lane - state.laneVisual) * Math.min(1, dt * 12);
 
       if (state.jumping) {
@@ -374,6 +390,9 @@
           o.passed = true;
           state.resolved++;
           state.dodged++;
+          state.missed++;
+          syncHud();
+          if (opts.onEvent) opts.onEvent({ type: 'notice', message: '⚠️ 漏做 1 题！必须撞上建筑答题，否则本关要重新完成' });
           checkFinish();
         }
         if (o.z < -220) state.objects.splice(i, 1);
@@ -381,7 +400,7 @@
 
       if (state.finish) {
         state.finish.z -= state.speed * dt;
-        if (state.finish.z <= 6) { state.finish.z = 6; end(true); return; }
+        if (state.finish.z <= 6) { state.finish.z = 6; end(state.missed === 0); return; }
       }
     }
 
@@ -437,7 +456,7 @@
       var base = coinBase(q);
       var comboBonus = Math.round(base * Math.min(state.combo, 10) * 0.05);
       var raw = (base + comboBonus) * (o && o.boss ? 3 : 1);
-      return Math.round(raw * (1 + coinBonusPct / 100));   // 伙伴等级越高，金币越多
+      return Math.round(raw * (1 + (coinBonusPct + gearCoinPct) / 100));   // 伙伴等级 + 装备加成
     }
 
     function renderQuestion(q, o) {
@@ -530,8 +549,8 @@
           state.bestCombo = Math.max(state.bestCombo, state.combo);
           state.gold += gain;
           state.lastCoin = gain;
-          state.score += Math.round((CFG.CORRECT_SCORE + state.combo * 10 + Math.round(gain * 2)) * (1 + scoreBonusPct / 100));
-          state.speed = Math.min(CFG.MAX_SPEED, state.speed + CFG.SPEED_UP);
+          state.score += Math.round((CFG.CORRECT_SCORE + state.combo * 10 + Math.round(gain * 2)) * (1 + (scoreBonusPct + gearScorePct) / 100));
+          state.speed = Math.min(CFG.MAX_SPEED * state.speedMul, state.speed + CFG.SPEED_UP);
           state.goodFlash = 0.35;
           if (o) {
             o.destroyed = true;
@@ -545,7 +564,14 @@
           state.wrongIds.push(q.id);
           state.score = Math.max(0, state.score + CFG.WRONG_SCORE);
           if (o && !o.resolved) { o.resolved = true; state.resolved++; checkFinish(); }
-          hurt('答错题目');
+          if (state.shieldCharge > 0) {
+            state.shieldCharge -= 1;
+            state.goodFlash = 0.25;
+            state.floats.push({ x: W / 2, y: H * 0.45, text: '🪖 头盔护住了，本次不扣血', color: '#ffe08a', age: 0, life: 1.4, size: 20 });
+            if (opts.onEvent) opts.onEvent({ type: 'notice', message: '🪖 头盔生效：这次答错不扣生命' });
+          } else {
+            hurt('答错题目');
+          }
         }
         syncHud();
         if (opts.onAnswer) opts.onAnswer(res.correct, q, payload, res);
@@ -1498,6 +1524,11 @@
       hudGold.textContent = state.gold;
       hudSpeed.textContent = (state.speed / CFG.BASE_SPEED).toFixed(1);
       if (hudCombo) hudCombo.textContent = state.combo;
+      if (hudMissed) hudMissed.textContent = state.missed || 0;
+      if (hudMissedChip) {
+        hudMissedChip.style.background = state.missed ? 'linear-gradient(135deg, rgba(214,64,59,.85), rgba(239,82,77,.85))' : '';
+        hudMissedChip.style.borderColor = state.missed ? 'rgba(255,200,200,.65)' : '';
+      }
       var total = state.planned || 1;
       var pct = Math.min(100, Math.round((state.resolved / total) * 100));
       if (hudBar) hudBar.style.width = pct + '%';
@@ -1507,12 +1538,17 @@
     /* ---------------- 结束 / 开始 ---------------- */
     function end(victory) {
       if (state.phase === 'finished') return;
+      var missedAll = state.missed > 0;
+      if (missedAll) victory = false;      // 漏做题目 → 本关不算完成，需要重做
       state.phase = 'finished';
       var accuracy = state.answered ? Math.round((state.correct / state.answered) * 100) : 0;
       var bonus = victory ? 200 : 0;   // 完赛额外计入“得分”，金币只来自答对题目
       state.score += bonus;
       state.result = {
         victory: victory,
+        valid: !missedAll,
+        missed: state.missed,
+        reason: missedAll ? 'missed' : (victory ? 'finish' : 'lives'),
         score: Math.round(state.score),
         gold: state.gold,
         correct: state.correct,
@@ -1528,6 +1564,31 @@
       if (opts.onEnd) opts.onEnd(state.result);
 
       var stars = victory ? (accuracy >= 90 ? '⭐⭐⭐' : accuracy >= 70 ? '⭐⭐' : '⭐') : '💥';
+      if (missedAll) {
+        setOverlay(
+          '<div class="overlay-card result-card">' +
+            '<div style="font-size:52px">🚧</div>' +
+            '<div class="result-title">本次未完成，需要重新完成</div>' +
+            '<p class="muted" style="margin-top:8px;font-size:13.5px;line-height:1.8">' +
+              '有 <b style="color:#c62c27">' + state.missed + ' 座建筑</b>的题目没有作答。<br>' +
+              '规则：<b>必须撞上建筑答题</b>，躲开或跳过去都会漏做，本关不计完成（作业也不会提交）。' +
+            '</p>' +
+            '<div class="result-grid">' +
+              '<div class="result-cell"><b>' + state.result.answered + '/' + state.planned + '</b><span>已作答</span></div>' +
+              '<div class="result-cell"><b>' + state.missed + '</b><span>漏做</span></div>' +
+              '<div class="result-cell"><b>' + state.result.gold + '</b><span>本次金币（保留）</span></div>' +
+            '</div>' +
+            '<div class="row game-actions" style="margin-top:14px;gap:10px">' +
+              '<button class="btn btn-primary grow" id="gAgain">🔁 重新完成本关</button>' +
+              '<button class="btn btn-ghost grow" id="gBack">返回学生端</button>' +
+            '</div>' +
+          '</div>');
+        var againM = overlay.querySelector('#gAgain');
+        var backM = overlay.querySelector('#gBack');
+        if (againM) againM.onclick = function () { if (opts.onRestart) opts.onRestart(); };
+        if (backM) backM.onclick = function () { if (opts.onQuit) opts.onQuit(); };
+        return;
+      }
       setOverlay(
         '<div class="overlay-card result-card">' +
           '<div style="font-size:52px">' + (victory ? '🏁' : '💥') + '</div>' +
@@ -1568,9 +1629,10 @@
           '<h2 class="ready-title" style="margin-top:8px;font-size:23px;font-weight:900">' + esc(subjectName) + ' · ' + esc(difficultyName) + '</h2>' +
           '<div class="ready-partner">🐾 出战伙伴：' + esc(partnerName) + ' Lv' + partnerLevel +
             (coinBonusPct > 0 ? '（金币 +' + coinBonusPct + '%、分数 +' + scoreBonusPct + '%）' : '') + '</div>' +
+          (gearNames.length ? '<div class="ready-gear">🎒 已装备：' + esc(gearNames.join(' · ')) + '</div>' : '') +
           '<p class="muted" style="margin-top:8px;font-size:13.5px">跑起来，撞到建筑就会出题，答对让建筑爆金币</p>' +
           '<div class="rule-grid">' +
-            '<div class="rule-item"><span>🏢</span><div><b>撞建筑 → 出题</b><p>换道或跳跃躲开就不会出题</p></div></div>' +
+            '<div class="rule-item"><span>🏢</span><div><b>必须撞建筑答题</b><p>躲开 / 跳过＝漏做，本关要重新完成</p></div></div>' +
             '<div class="rule-item"><span>🪙</span><div><b>答对 → 爆金币</b><p>题目越难，金币越多（10 / 20 / 30）</p></div></div>' +
             '<div class="rule-item"><span>❤️</span><div><b>答错 → 掉血</b><p>共 3 点生命，连对有连击奖励</p></div></div>' +
             '<div class="rule-item"><span>🏁</span><div><b>跑完全程 → 结算</b><p>躲得越稳、答得越准分越高</p></div></div>' +
@@ -1646,7 +1708,7 @@
     function jump() {
       if (state.phase !== 'playing' || state.jumping) return;
       state.jumping = true;
-      state.vy = -900;
+      state.vy = -900 * (1 + gearJumpPct / 100);
       dust(project(0, state.laneVisual).x, H * 0.9 + 12);
     }
     function keyHandler(e) {
@@ -1717,6 +1779,7 @@
       },
       state: state,
       theme: theme,
+      gear: { speedPct: gearSpeedPct, jumpPct: gearJumpPct, coinPct: gearCoinPct, scorePct: gearScorePct, extraLives: gearExtraLives, safeWrong: gearSafeWrong, names: gearNames },
       partner: { id: runner, name: partnerName, level: partnerLevel, coinBonusPct: coinBonusPct, scoreBonusPct: scoreBonusPct }
     };
   }
