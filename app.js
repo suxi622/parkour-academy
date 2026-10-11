@@ -57,11 +57,12 @@
   /* ============================================================
    * 状态
    * ============================================================ */
-  var STORAGE_KEY = 'pk-academy-v3';   // v3：清掉旧版本里的演示班级 / 测试账号与初始积分
+  var STORAGE_KEY = 'pk-academy-v5';   // v5：清掉历史测试数据（班级 / 演示账号 / 榜单缓存）
 
   function defaultState() {
     return {
-      user: { name: '', emoji: '🐱', klass: '', role: 'student' },
+      user: { name: '', emoji: '🐱', klass: '', role: 'student', school: '', gradeKey: '', gradeLabel: '' },
+      lastSchool: '',          // 记住上次填写的学校名，下次登录自动带出
       loggedIn: false,        // 是否已经登录（未登录只显示登录页）
       coins: 320,
       stats: {},              // { [subjectKey]: { answered, correct, points } }
@@ -116,6 +117,9 @@
       name: S.user.name,
       emoji: S.user.emoji,
       klass: S.user.klass,
+      school: S.user.school,
+      gradeKey: S.user.gradeKey,
+      gradeLabel: S.user.gradeLabel,
       isMe: true,
       points: { today: 0, week: 0, total: 0 },
       subjectPoints: {},
@@ -147,6 +151,8 @@
     loginRole: '',
     lbRange: 'today',
     lbSubject: 'all',
+    lbScope: 'class',       // 学生榜单范围：class=本班 / grade=同年级
+    lbClass: 'all',         // 老师榜单：按班级筛选
     subject: 'math',
     difficulty: 'basic',
     teacherTab: 'classes',
@@ -207,6 +213,122 @@
     return (S.classes || []).filter(function (c) { return c.code === code; })[0] || null;
   }
 
+  /** 学校名归一化：去空格 + 忽略大小写 + 全角转半角，用于"同一所学校"的判断 */
+  function normSchool(name) {
+    return String(name === undefined || name === null ? '' : name)
+      .replace(/[Ａ-Ｚａ-ｚ０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 65248); })
+      .replace(/[\s\u3000]/g, '')
+      .toLowerCase();
+  }
+
+  /** 学校名 + 班级码 才能定位到同一个班级 */
+  function classBySchoolCode(school, code) {
+    var c0 = String(code === undefined || code === null ? '' : code).trim();
+    if (!c0) return null;
+    var sc = normSchool(school);
+    var hit = (S.classes || []).filter(function (c) {
+      if (c.code !== c0) return false;
+      if (!c.school || !sc) return true;     // 老数据没有学校字段时宽松处理
+      return normSchool(c.school) === sc;
+    });
+    return hit[0] || null;
+  }
+
+  /** 老师自己带领的班级（同一所学校的班级） */
+  function leadingClasses() {
+    var sc = normSchool(S.user.school);
+    return (S.classes || []).filter(function (c) {
+      if (c.owner && S.user.name && c.owner !== S.user.name) return false;
+      if (sc && c.school && normSchool(c.school) !== sc) return false;
+      return true;
+    });
+  }
+
+  function teacherClassNames() {
+    return leadingClasses().map(function (c) { return c.name; });
+  }
+
+  /** 学生视角的班级信息 */
+  function myScope() {
+    var cls = myClass();
+    return {
+      school: S.user.school || '',
+      schoolKey: normSchool(S.user.school),
+      className: cls ? cls.name : (S.user.klass || ''),
+      gradeKey: (cls && cls.gradeKey) || S.user.gradeKey || '',
+      gradeLabel: (cls && cls.gradeLabel) || S.user.gradeLabel || ''
+    };
+  }
+
+  function sameSchool(e) {
+    var sc = normSchool(S.user.school);
+    if (!sc) return true;
+    if (!e.school) return true;          // 老数据没有学校字段时不排除
+    return normSchool(e.school) === sc;
+  }
+
+  /** 把一个榜单快照按身份过滤：学生只看本班 / 同年级，老师只看自己带的学生 */
+  function eventInScope(ev) {
+    if (!ev) return false;
+    if (ev.isMe) return true;
+    var klass = ev.klass || ev.k || '';
+    var school = ev.school || ev.sc || '';
+    var grade = ev.gradeKey || ev.gr || '';
+    if (school && normSchool(school) !== normSchool(S.user.school)) return false;
+    if (!klass) return true;                 // 没有班级信息时不武断过滤
+    if (isTeacher()) {
+      var names = teacherClassNames();
+      if (!names.length) return true;
+      if (ui.lbClass && ui.lbClass !== 'all' && klass !== ui.lbClass) return false;
+      return names.indexOf(klass) !== -1;
+    }
+    var mine = myScope();
+    if ((ui.lbScope || 'class') === 'grade') {
+      if (!mine.gradeKey) return klass === mine.className;
+      return grade ? grade === mine.gradeKey : klass === mine.className;
+    }
+    return klass === mine.className;
+  }
+
+  function scopeSnapshot(snap, scope) {
+    if (!snap) return snap;
+    scope = scope || (isTeacher() ? 'teacher' : (ui.lbScope || 'class'));
+    var mine = myScope();
+    var list = (snap.entries || []).filter(function (e) {
+      if (e.isMe) return true;
+      if (!sameSchool(e)) return false;
+      if (isTeacher()) {
+        var names = teacherClassNames();
+        if (!names.length) return true;
+        if (ui.lbClass && ui.lbClass !== 'all' && e.klass !== ui.lbClass) return false;
+        return names.indexOf(e.klass) !== -1;
+      }
+      if (scope === 'grade') {
+        if (!mine.gradeKey) return e.klass === mine.className;
+        return e.gradeKey ? e.gradeKey === mine.gradeKey : e.klass === mine.className;
+      }
+      return e.klass === mine.className;
+    });
+    list.sort(function (a, b) { return (b.score || 0) - (a.score || 0) || String(a.name).localeCompare(String(b.name), 'zh'); });
+    list.forEach(function (e, i) {
+      if (e.rank !== i + 1) e.delta = 0;
+      e.rank = i + 1;
+    });
+    // 实时动态同样只显示范围内的同学
+    var byName = {};
+    (snap.entries || []).forEach(function (e) { byName[e.name] = e; });
+    var events = (snap.events || []).filter(function (ev) {
+      var src = byName[ev.name] || {};
+      return eventInScope({
+        isMe: ev.isMe === true || ev.name === S.user.name,
+        klass: ev.klass || ev.k || src.klass || '',
+        school: ev.school || ev.sc || src.school || '',
+        gradeKey: ev.gradeKey || ev.gr || src.gradeKey || ''
+      });
+    });
+    return Object.assign({}, snap, { entries: list, events: events });
+  }
+
   function classById(id) {
     return (S.classes || []).filter(function (c) { return c.id === id; })[0] || null;
   }
@@ -221,8 +343,14 @@
     if (!cls) return false;
     if ((S.joinedClassIds || []).indexOf(cls.id) === -1) S.joinedClassIds = (S.joinedClassIds || []).concat(cls.id);
     S.user.klass = cls.name;
+    if (cls.gradeKey) { S.user.gradeKey = cls.gradeKey; S.user.gradeLabel = cls.gradeLabel || ''; }
     leaderboard.me.klass = cls.name;
-    if (leaderboard.updateProfile) leaderboard.updateProfile({ name: S.user.name, emoji: S.user.emoji, klass: cls.name });
+    if (leaderboard.updateProfile) {
+      leaderboard.updateProfile({
+        name: S.user.name, emoji: S.user.emoji, klass: cls.name,
+        school: S.user.school, gradeKey: S.user.gradeKey, gradeLabel: S.user.gradeLabel
+      });
+    }
     return true;
   }
 
@@ -232,7 +360,12 @@
     S.loggedIn = true;
     leaderboard.me.name = S.user.name;
     leaderboard.me.emoji = S.user.emoji;
-    if (leaderboard.updateProfile) leaderboard.updateProfile({ name: S.user.name, emoji: S.user.emoji, klass: S.user.klass });
+    if (leaderboard.updateProfile) {
+      leaderboard.updateProfile({
+        name: S.user.name, emoji: S.user.emoji, klass: S.user.klass,
+        school: S.user.school, gradeKey: S.user.gradeKey, gradeLabel: S.user.gradeLabel
+      });
+    }
     save();
   }
 
@@ -270,6 +403,31 @@
       ? (String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'))
       : ((d.getMonth() + 1) + '月' + d.getDate() + '日 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'));
   }
+  /** 合并一条来自云端中继的班级档案（跨设备共享「学校 + 班级码 + 年级」） */
+  function mergeClass(m) {
+    if (!m || !m.cid) return false;
+    S.classes = S.classes || [];
+    var cur = classById(m.cid);
+    if (!cur && m.code) {
+      cur = S.classes.filter(function (c) {
+        return c.code === m.code && (!c.school || !m.school || normSchool(c.school) === normSchool(m.school));
+      })[0] || null;
+    }
+    var fresh = {
+      id: m.cid, name: m.name || '未命名班级', code: m.code || '',
+      school: m.school || '', gradeKey: m.gradeKey || '', gradeLabel: m.gradeLabel || '', stage: m.stage || '',
+      owner: m.owner || '', teacher: m.teacher || '', students: Number(m.students) || 0,
+      avg: 0, rate: 0, createdAt: m.at || Date.now(), fromCloud: true
+    };
+    if (!cur) { S.classes.push(fresh); return true; }
+    var changed = false;
+    ['name', 'code', 'school', 'gradeKey', 'gradeLabel', 'stage', 'owner', 'teacher'].forEach(function (k) {
+      if (fresh[k] && cur[k] !== fresh[k]) { cur[k] = fresh[k]; changed = true; }
+    });
+    cur.fromCloud = true;
+    return changed;
+  }
+
   /** 合并一条来自云端中继的提问 / 回复，返回是否有变化 */
   function mergeAsk(m) {
     if (!m || !m.qid) return false;
@@ -389,7 +547,10 @@
     }).join('');
   }
 
-  function myPoints() { return leaderboard.snapshot({ range: 'today' }).entries.filter(function (e) { return e.isMe; })[0]; }
+  function scopedSnapshot(range, subject) {
+    return scopeSnapshot(leaderboard.snapshot({ range: range || 'today', subject: subject || 'all' }));
+  }
+  function myPoints() { return scopedSnapshot('today').entries.filter(function (e) { return e.isMe; })[0]; }
 
   function subjectTile(s) {
     var st = S.stats[s.key] || { answered: 0, correct: 0 };
@@ -450,10 +611,12 @@
 
         (isStu
           ? '<div class="login-form">' +
+              '<div class="form-field"><label>学校名称</label>' +
+                '<input class="input" id="lgSchool" maxlength="20" placeholder="例如：阳光小学" value="' + esc(S.user.school || S.lastSchool || '') + '"></div>' +
               '<div class="form-field"><label>你的昵称</label>' +
                 '<input class="input" id="lgName" maxlength="12" placeholder="例如：小明" value="' + esc(S.user.name || '') + '"></div>' +
               '<div class="form-field"><label>班级码 <span class="opt-tag">选填</span></label>' +
-                '<input class="input code-input" id="lgCode" inputmode="numeric" maxlength="4" placeholder="老师给的 4 位数字" value="' + esc(cls ? cls.code : '') + '"></div>' +
+                '<input class="input code-input" id="lgCode" inputmode="numeric" maxlength="4" placeholder="老师给的 4 位数字" value="' + esc(ui.joinCode || (cls ? cls.code : '')) + '"></div>' +
               '<div id="lgMsg" class="login-msg"></div>' +
               '<button class="btn btn-primary btn-lg btn-block" data-action="login-enter" data-role="student">🚀 进入学生端</button>' +
               '<button class="btn btn-ghost btn-block" data-action="login-enter" data-role="student" data-skip="1">暂时没有班级码，先进入体验</button>' +
@@ -464,6 +627,8 @@
               '</p>' +
             '</div>'
           : '<div class="login-form">' +
+              '<div class="form-field"><label>学校名称</label>' +
+                '<input class="input" id="lgSchool" maxlength="20" placeholder="例如：阳光小学" value="' + esc(S.user.school || S.lastSchool || '') + '"></div>' +
               '<div class="form-field"><label>你的称呼</label>' +
                 '<input class="input" id="lgName" maxlength="12" placeholder="例如：李老师" value="' + esc(S.user.name || '') + '"></div>' +
               '<div id="lgMsg" class="login-msg"></div>' +
@@ -492,7 +657,7 @@
    * 首页
    * ============================================================ */
   function viewHome() {
-    var snap = leaderboard.snapshot({ range: 'today' });
+    var snap = scopedSnapshot('today');
     var me = snap.entries.filter(function (e) { return e.isMe; })[0];
     var test = PK.selfTest(bank());
     var html = '';
@@ -571,7 +736,7 @@
    * ============================================================ */
   function viewStudent() {
     var me = myPoints();
-    var snap = leaderboard.snapshot({ range: 'today' });
+    var snap = scopedSnapshot('today');
     var acc = accuracy();
     var subject = PK.subjectByKey(ui.subject);
     var pool = PK.questionsFor({ subject: ui.subject, difficulty: ui.difficulty });
@@ -1452,15 +1617,21 @@
    * 实时积分榜单
    * ============================================================ */
   function viewLeaderboard() {
-    var snap = leaderboard.snapshot({ range: ui.lbRange, subject: ui.lbSubject });
+    var snap = scopedSnapshot(ui.lbRange, ui.lbSubject);
     var me = snap.entries.filter(function (e) { return e.isMe; })[0];
     var top = snap.entries.slice(0, 3);
     var rest = snap.entries.slice(3);
+    var mine = myScope();
+    var scopeName = isTeacher()
+      ? (ui.lbClass && ui.lbClass !== 'all' ? ui.lbClass : '我带领的全部班级')
+      : (ui.lbScope === 'grade'
+          ? ('同年级' + (mine.gradeLabel ? '（' + mine.gradeLabel + '）' : ''))
+          : ('本班' + (mine.className ? '（' + mine.className + '）' : '')));
 
     var html = '<div class="fade-in">';
     html += '<div class="row between wrap" style="gap:12px;margin-bottom:18px">' +
       '<div><h2 style="font-size:21px;font-weight:900">🏆 实时积分榜单</h2>' +
-      '<p class="muted" style="font-size:13px;margin-top:4px">榜单每 2 秒自动刷新 · 答题积分实时入榜 · 名次变化即时提示</p></div>' +
+      '<p class="muted" style="font-size:13px;margin-top:4px">当前范围：<b>' + esc(scopeName) + '</b> · 每 2 秒刷新 · 只看自己范围内的同学</p></div>' +
       '<div class="row" style="gap:10px;flex-wrap:wrap">' +
         '<div class="filter-tabs">' +
           [['today', '今日榜'], ['week', '本周榜'], ['total', '总榜']].map(function (r) {
@@ -1471,6 +1642,33 @@
           '<option value="all"' + (ui.lbSubject === 'all' ? ' selected' : '') + '>全部学科</option>' +
           PK.SUBJECTS.map(function (s) { return '<option value="' + s.key + '"' + (ui.lbSubject === s.key ? ' selected' : '') + '>' + s.name + '</option>'; }).join('') +
         '</select>' +
+      '</div>' +
+    '</div>';
+
+    // 范围切换：学生只能看本班 / 同年级；老师看自己带领的班级
+    html += '<div class="card" style="margin-bottom:16px">' +
+      '<div class="row between wrap" style="gap:10px">' +
+        '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">' +
+          '<span class="card-sub">查看范围</span>' +
+          (isTeacher()
+            ? '<select class="select" style="width:auto;min-width:170px" data-action="lb-class">' +
+                '<option value="all"' + (ui.lbClass === 'all' ? ' selected' : '') + '>我带领的全部班级</option>' +
+                leadingClasses().map(function (c) {
+                  return '<option value="' + esc(c.name) + '"' + (ui.lbClass === c.name ? ' selected' : '') + '>' + esc(c.name) + '（' + esc(c.gradeLabel || '未识别') + '）</option>';
+                }).join('') +
+              '</select>'
+            : '<div class="filter-tabs">' +
+                '<button data-action="lb-scope" data-key="class" class="' + (ui.lbScope !== 'grade' ? 'active' : '') + '">本班榜</button>' +
+                '<button data-action="lb-scope" data-key="grade" class="' + (ui.lbScope === 'grade' ? 'active' : '') + '"' + (mine.gradeKey ? '' : ' disabled') + '>同年级榜</button>' +
+              '</div>') +
+        '</div>' +
+        '<span class="lb-sub">' +
+          (isTeacher()
+            ? '只统计你带领的班级（同一所学校）'
+            : (ui.lbScope === 'grade'
+                ? '只显示同校同年级的同学' + (mine.gradeLabel ? '（' + esc(mine.gradeLabel) + '）' : '')
+                : '只显示同校同班的同学')) +
+        '</span>' +
       '</div>' +
     '</div>';
 
@@ -1536,13 +1734,14 @@
     '</section>';
 
     html += '<div class="filter-tabs" style="margin:18px 0">' +
-      [['classes', '班级学情'], ['ask', '学生提问'], ['homework', '作业管理'], ['questions', '题库管理'], ['engine', '答案判定引擎'], ['race', '课堂竞速']].map(function (t) {
+      [['classes', '班级学情'], ['analysis', '班级对比统计'], ['ask', '学生提问'], ['homework', '作业管理'], ['questions', '题库管理'], ['engine', '答案判定引擎'], ['race', '课堂竞速']].map(function (t) {
         var badge = (t[0] === 'ask' && pendingAskCount()) ? ' <span class="tab-badge">' + pendingAskCount() + '</span>' : '';
         return '<button data-action="teacher-tab" data-key="' + t[0] + '" class="' + (ui.teacherTab === t[0] ? 'active' : '') + '">' + t[1] + badge + '</button>';
       }).join('') +
     '</div>';
 
     if (ui.teacherTab === 'classes') html += teacherClasses();
+    else if (ui.teacherTab === 'analysis') html += teacherAnalysis();
     else if (ui.teacherTab === 'ask') html += teacherAskView();
     else if (ui.teacherTab === 'homework') html += teacherHomework();
     else if (ui.teacherTab === 'questions') html += teacherQuestions();
@@ -1553,27 +1752,33 @@
   }
 
   function teacherClasses() {
-    var snap = leaderboard.snapshot({ range: 'today' });
+    var snap = scopedSnapshot('today');
+    var my = leadingClasses();
     var html = '';
 
     html += '<section class="card" style="margin-bottom:18px">' +
       '<div class="row between wrap" style="gap:12px">' +
-        '<div><div class="card-title" style="margin:0"><span class="emoji">🏫</span>我的班级 <span class="card-sub">共 ' + S.classes.length + ' 个</span></div>' +
-        '<p class="muted" style="font-size:12.5px;margin-top:6px">创建班级后会立刻弹出 4 位班级码，把班级码或邀请链接发给学生即可加入；老师不会作为学生进入班级。</p></div>' +
+        '<div><div class="card-title" style="margin:0"><span class="emoji">🏫</span>我的班级 <span class="card-sub">共 ' + my.length + ' 个' +
+          (S.user.school ? ' · ' + esc(S.user.school) : '') + '</span></div>' +
+        '<p class="muted" style="font-size:12.5px;margin-top:6px">创建班级后会立刻弹出 4 位班级码；学生必须输入<b>同一所学校名 + 同一班级码</b>才算加入。年级由 AI 根据班级名称自动识别。</p></div>' +
         '<button class="btn btn-teacher" data-action="create-class">＋ 创建班级</button>' +
       '</div>' +
     '</section>';
 
-    html += S.classes.length === 0
+    html += my.length === 0
       ? '<section class="card center" style="padding:34px 20px">' +
           '<div style="font-size:38px">🏫</div>' +
           '<h3 style="margin-top:10px;font-size:17px;font-weight:900">还没有班级</h3>' +
-          '<p class="muted" style="font-size:13px;margin-top:6px">创建第一个班级后，会立刻弹出 4 位班级码，发给学生即可加入。</p>' +
+          '<p class="muted" style="font-size:13px;margin-top:6px">创建第一个班级后，会立刻弹出 4 位班级码，发给学生即可加入（学生需同校）。</p>' +
           '<button class="btn btn-teacher" style="margin-top:16px" data-action="create-class">＋ 创建第一个班级</button>' +
         '</section>'
-      : '<section class="grid grid-3">' + S.classes.map(function (c) {
+      : '<section class="grid grid-3">' + my.map(function (c) {
       return '<div class="card">' +
         '<div class="row between"><b style="font-size:15px">' + esc(c.name) + '</b><span class="badge">班级码 ' + esc(c.code) + '</span></div>' +
+        '<div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">' +
+          '<span class="badge">🏫 ' + esc(c.school || S.user.school || '未填学校') + '</span>' +
+          '<span class="badge">🎓 ' + esc(c.gradeLabel || '未识别年级') + (c.stage ? '·' + esc(c.stage) : '') + '</span>' +
+        '</div>' +
         '<div class="row" style="gap:20px;margin-top:14px">' +
           '<div><div style="font-size:21px;font-weight:900">' + c.students + '</div><span class="lb-sub">学生数</span></div>' +
           '<div><div style="font-size:21px;font-weight:900;color:var(--primary)">' + c.avg + '</div><span class="lb-sub">平均分</span></div>' +
@@ -1607,6 +1812,152 @@
           '<td>' + (e.streak || 0) + ' 题</td>' +
           '<td>' + tag + '</td></tr>';
       }).join('') + '</tbody></table>';
+  }
+
+  /* ============================================================
+   * 班级对比统计（自动实时计算，老师只看结果）
+   * ============================================================ */
+  function classStats() {
+    var snap = leaderboard.snapshot({ range: 'today', subject: 'all' });
+    var my = leadingClasses();
+    var rows = my.map(function (c) {
+      var members = (snap.entries || []).filter(function (e) {
+        if (e.klass !== c.name) return false;
+        if (e.school && c.school && normSchool(e.school) !== normSchool(c.school)) return false;
+        return true;
+      });
+      var answered = 0, correct = 0, todaySum = 0, totalSum = 0, active = 0;
+      members.forEach(function (e) {
+        answered += e.answered || 0;
+        correct += e.correct || 0;
+        todaySum += (e.points && e.points.today) || 0;
+        totalSum += (e.points && e.points.total) || 0;
+        if ((e.answered || 0) > 0) active++;
+      });
+      var students = Math.max(members.length, c.students || 0, active);
+      var hwList = (S.homework || []).filter(function (h) {
+        return h.classId === c.id || h.className === c.name;
+      });
+      var pairs = 0, done = 0;
+      hwList.forEach(function (h) {
+        var d = Object.keys(h.submissions || {}).length;
+        pairs += Math.max(students, d, 1);
+        done += d;
+      });
+      var acc = answered ? Math.round((correct / answered) * 100) : 0;
+      return {
+        cls: c, students: students, joined: members.length, active: active,
+        answered: answered, correct: correct, accuracy: acc, wrongRate: answered ? 100 - acc : 0,
+        avgToday: members.length ? Math.round(todaySum / members.length) : 0,
+        totalPoints: totalSum,
+        hwCount: hwList.length,
+        hwRate: pairs ? Math.round((done / pairs) * 100) : 0,
+        hwSubmitted: done, hwPairs: pairs
+      };
+    });
+    rows.sort(function (a, b) {
+      return PK.gradeOrder(a.cls) - PK.gradeOrder(b.cls) || String(a.cls.name).localeCompare(String(b.cls.name), 'zh');
+    });
+    return rows;
+  }
+
+  function analysisInsights(rows) {
+    var out = [];
+    if (!rows.length) return ['还没有班级数据。先在「班级学情」创建班级，把班级码发给学生，这里就会自动生成对比分析。'];
+    var withData = rows.filter(function (r) { return r.answered > 0; });
+    if (withData.length) {
+      var byAcc = withData.slice().sort(function (a, b) { return b.accuracy - a.accuracy; });
+      out.push('📈 正确率最高：' + byAcc[0].cls.name + '（' + byAcc[0].accuracy + '%），可以作为示范班。');
+      var worst = byAcc[byAcc.length - 1];
+      if (worst.cls.id !== byAcc[0].cls.id) {
+        out.push('⚠️ ' + worst.cls.name + ' 正确率最低（' + worst.accuracy + '%），建议优先讲评这个班的错题。');
+      }
+      var byWrong = withData.slice().sort(function (a, b) { return b.wrongRate - a.wrongRate; })[0];
+      out.push('🧯 错题率最高：' + byWrong.cls.name + '（' + byWrong.wrongRate + '%），错题修复训练先安排它。');
+      var byAvg = withData.slice().sort(function (a, b) { return b.avgToday - a.avgToday; })[0];
+      out.push('🏆 今日人均积分最高：' + byAvg.cls.name + '（' + byAvg.avgToday + ' 分）。');
+    } else {
+      out.push('📭 今天还没有班级答题数据，学生开始闯关后这里会自动更新。');
+    }
+    var hwRows = rows.filter(function (r) { return r.hwCount > 0; });
+    if (hwRows.length) {
+      var low = hwRows.slice().sort(function (a, b) { return a.hwRate - b.hwRate; })[0];
+      out.push('📝 作业提交率最低：' + low.cls.name + '（' + low.hwRate + '%，' + low.hwSubmitted + '/' + low.hwPairs + '），记得提醒未交的同学。');
+      if (low.hwRate < 60) out.push('💡 建议：把截止时间设近一点，或在课上留 5 分钟让学生当场完成。');
+    } else {
+      out.push('📝 还没有给班级布置作业，布置后这里会出现各班的作业提交率对比。');
+    }
+    var idle = rows.filter(function (r) { return r.active === 0; });
+    if (idle.length) out.push('💤 今天还没有人答题：' + idle.map(function (r) { return r.cls.name; }).join('、') + '。');
+    return out;
+  }
+
+  function teacherAnalysis() {
+    var rows = classStats();
+    var totals = rows.reduce(function (acc, r) {
+      acc.students += r.students;
+      acc.answered += r.answered;
+      acc.correct += r.correct;
+      acc.hwPairs += r.hwPairs;
+      acc.hwSubmitted += r.hwSubmitted;
+      return acc;
+    }, { students: 0, answered: 0, correct: 0, hwPairs: 0, hwSubmitted: 0 });
+    var accAvg = totals.answered ? Math.round((totals.correct / totals.answered) * 100) : 0;
+    var hwAvg = totals.hwPairs ? Math.round((totals.hwSubmitted / totals.hwPairs) * 100) : 0;
+    var maxAvg = Math.max(1, rows.reduce(function (m, r) { return Math.max(m, r.avgToday); }, 0));
+    var maxAcc = 100;
+
+    var html = '<div data-live="teacher-analysis">';
+    html += '<section class="grid grid-4">' +
+      '<div class="card center"><div style="font-size:24px;font-weight:900">' + rows.length + '</div><span class="lb-sub">我带领的班级</span></div>' +
+      '<div class="card center"><div style="font-size:24px;font-weight:900">' + totals.students + '</div><span class="lb-sub">学生总数</span></div>' +
+      '<div class="card center"><div style="font-size:24px;font-weight:900;color:var(--primary)">' + accAvg + '%</div><span class="lb-sub">整体正确率</span></div>' +
+      '<div class="card center"><div style="font-size:24px;font-weight:900;color:var(--accent)">' + hwAvg + '%</div><span class="lb-sub">作业提交率</span></div>' +
+    '</section>';
+
+    html += '<section class="card" style="margin-top:18px">' +
+      '<div class="row between wrap" style="gap:10px">' +
+        '<div class="card-title" style="margin:0"><span class="emoji">📊</span>班级对比统计 <span class="card-sub">自动实时计算 · 无需手动汇总</span></div>' +
+        '<span class="row" style="gap:6px"><span class="live-dot"></span><span class="card-sub">每 2 秒自动刷新</span></span>' +
+      '</div>' +
+      (rows.length
+        ? '<div style="overflow-x:auto"><table class="table" style="margin-top:12px"><thead><tr>' +
+            '<th>班级</th><th>年级</th><th>人数</th><th>今日人均分</th><th>正确率</th><th>错题率</th><th>答题数</th><th>作业提交率</th>' +
+          '</tr></thead><tbody>' +
+          rows.map(function (r) {
+            var accColor = r.accuracy >= 80 ? '#12833f' : r.accuracy >= 60 ? '#b26a00' : '#c62c27';
+            return '<tr>' +
+              '<td><b>' + esc(r.cls.name) + '</b><div class="lb-sub">' + esc(r.cls.school || S.user.school || '') + ' · 班级码 ' + esc(r.cls.code) + '</div></td>' +
+              '<td>' + esc(r.cls.gradeLabel || '未识别') + '</td>' +
+              '<td>' + r.students + (r.joined ? '<div class="lb-sub">已上榜 ' + r.joined + '</div>' : '') + '</td>' +
+              '<td><b style="color:var(--primary)">' + r.avgToday + '</b>' +
+                '<div class="bar-track" style="margin-top:5px;width:70px"><div class="bar-fill" style="width:' + Math.round((r.avgToday / maxAvg) * 100) + '%"></div></div></td>' +
+              '<td><b style="color:' + accColor + '">' + (r.answered ? r.accuracy + '%' : '—') + '</b>' +
+                '<div class="bar-track" style="margin-top:5px;width:70px"><div class="bar-fill" style="width:' + Math.round((r.accuracy / maxAcc) * 100) + '%"></div></div></td>' +
+              '<td>' + (r.answered ? r.wrongRate + '%' : '—') + '</td>' +
+              '<td>' + r.answered + '</td>' +
+              '<td>' + (r.hwCount ? r.hwRate + '%<div class="lb-sub">' + r.hwSubmitted + '/' + r.hwPairs + '</div>' : '<span class="muted">未布置</span>') + '</td>' +
+            '</tr>';
+          }).join('') +
+          '</tbody></table></div>'
+        : '<div class="empty"><span class="em">🏫</span>还没有班级，先到「班级学情」创建班级</div>') +
+    '</section>';
+
+    html += '<section class="card" style="margin-top:18px">' +
+      '<div class="card-title"><span class="emoji">🤖</span>AI 自动分析 <span class="card-sub">根据上面的数据实时生成，老师只需查看</span></div>' +
+      analysisInsights(rows).map(function (t) {
+        return '<div class="list-row" style="align-items:flex-start"><span class="grow" style="line-height:1.75">' + esc(t) + '</span></div>';
+      }).join('') +
+    '</section>';
+
+    html += '<section class="card" style="margin-top:18px">' +
+      '<div class="card-title"><span class="emoji">📌</span>统计口径说明</div>' +
+      '<div class="list-row"><span class="grow">学生范围</span><b>仅统计我带领的班级（同校 + 班级码一致）</b></div>' +
+      '<div class="list-row"><span class="grow">正确率 / 错题率</span><b>按学生答题记录汇总（答对 ÷ 答题）</b></div>' +
+      '<div class="list-row"><span class="grow">作业提交率</span><b>已提交人次 ÷ 应提交人次</b></div>' +
+      '<div class="list-row"><span class="grow">年级归属</span><b>由 AI 从班级名称自动识别</b></div>' +
+    '</section>';
+    return html + '</div>';
   }
 
   function teacherAskView() {
@@ -1784,7 +2135,7 @@
       '<div id="raceBoard">' + raceBoardHtml() + '</div>' +
     '</div>';
 
-    var snap = leaderboard.snapshot({ range: 'today' });
+    var snap = scopedSnapshot('today');
     html += '<div>' +
       '<div class="card"><div class="card-title"><span class="emoji">🧭</span>竞速设置</div>' +
         '<div class="list-row"><span class="grow">题目来源</span><b>' + (PK.subjectByKey(ui.subject).name) + ' · ' + difficultyName(ui.difficulty) + '</b></div>' +
@@ -1864,6 +2215,14 @@
     var route = parseRoute();
     var seg = route.segments;
     var html = '';
+
+    // 邀请链接里的 ?school=xxx#/student/join/1234 ：自动带出学校名与班级码
+    try {
+      var qs = new URLSearchParams(location.search || '');
+      var qSchool = (qs.get('school') || '').trim();
+      if (qSchool && !S.user.school) { S.lastSchool = qSchool.slice(0, 20); }
+      if (seg[0] === 'student' && seg[1] === 'join') ui.joinCode = seg[2] || ui.joinCode;
+    } catch (e) {}
 
     if (currentGame) { currentGame.destroy(); currentGame = null; }
 
@@ -2000,6 +2359,13 @@
       pendingLive = false;
 
       // 先合并来自云端中继的学生提问 / 老师回复
+      var farCls = (leaderboard.takeClasses ? leaderboard.takeClasses() : []);
+      if (farCls.length) {
+        var clsChanged = false;
+        farCls.forEach(function (m) { if (mergeClass(m)) clsChanged = true; });
+        if (clsChanged) { save(); if (!currentGame) render(); }
+      }
+
       var far = (leaderboard.takeAsks ? leaderboard.takeAsks() : []);
       if (far.length) {
         var askChanged = false;
@@ -2025,7 +2391,7 @@
       }
 
       renderTopStats();
-      var snap = leaderboard.snapshot({ range: 'today' });
+      var snap = scopedSnapshot('today');
 
       var homeLb = document.querySelector('[data-live="home-lb"]');
       if (homeLb) homeLb.innerHTML = leaderboardRows(snap.entries.slice(0, 6), false);
@@ -2036,7 +2402,7 @@
       var studentFeed = document.querySelector('[data-live="student-feed"]');
       if (studentFeed) studentFeed.innerHTML = feedHtml(snap.events);
 
-      var lbSnap = leaderboard.snapshot({ range: ui.lbRange, subject: ui.lbSubject });
+      var lbSnap = scopedSnapshot(ui.lbRange, ui.lbSubject);
       var podium = document.querySelector('[data-live="lb-podium"]');
       if (podium) podium.innerHTML = podiumHtml(lbSnap.entries.slice(0, 3));
       var lbList = document.querySelector('[data-live="lb-list"]');
@@ -2046,6 +2412,14 @@
 
       var teacherTable = document.querySelector('[data-live="teacher-table"]');
       if (teacherTable) teacherTable.innerHTML = teacherStudentTable(snap.entries);
+
+      var teacherAnalysisBox = document.querySelector('[data-live="teacher-analysis"]');
+      if (teacherAnalysisBox) {
+        var holder = document.createElement('div');
+        holder.innerHTML = teacherAnalysis();
+        var fresh = holder.querySelector('[data-live="teacher-analysis"]');
+        if (fresh) teacherAnalysisBox.innerHTML = fresh.innerHTML;
+      }
 
       var myBars = document.querySelectorAll('.my-rank-bar');
       if (myBars.length) {
@@ -2146,6 +2520,10 @@
         ui.lbRange = actionEl.getAttribute('data-key');
         render();
         break;
+      case 'lb-scope':
+        ui.lbScope = actionEl.getAttribute('data-key') === 'grade' ? 'grade' : 'class';
+        render();
+        break;
       case 'teacher-tab':
         ui.teacherTab = actionEl.getAttribute('data-key');
         render();
@@ -2157,14 +2535,23 @@
       case 'login-enter': {
         var wantRole = actionEl.getAttribute('data-role') || ui.loginRole || 'student';
         var skipCode = actionEl.getAttribute('data-skip') === '1';
+        var schoolInput = $('#lgSchool');
+        var loginSchool = schoolInput ? schoolInput.value.trim() : '';
         var nameInput = $('#lgName');
         var msgBox = $('#lgMsg');
         var loginName = nameInput ? nameInput.value.trim() : '';
+        if (!loginSchool) {
+          if (msgBox) msgBox.innerHTML = '<span class="bad">请先填写学校名称</span>';
+          if (schoolInput) schoolInput.focus();
+          break;
+        }
         if (!loginName) {
           if (msgBox) msgBox.innerHTML = '<span class="bad">请先填写昵称，再进入</span>';
           if (nameInput) nameInput.focus();
           break;
         }
+        S.user.school = loginSchool.slice(0, 20);
+        S.lastSchool = S.user.school;
         if (wantRole === 'teacher') {
           S.user.klass = S.user.klass || '教师';
           enterApp('teacher', loginName);
@@ -2183,9 +2570,9 @@
             if (msgBox) msgBox.innerHTML = '<span class="bad">班级码是 4 位数字，请检查一下</span>';
             break;
           }
-          var targetClass = classByCode(code);
+          var targetClass = classBySchoolCode(loginSchool, code);
           if (!targetClass) {
-            if (msgBox) msgBox.innerHTML = '<span class="bad">没有找到这个班级码，可以点「先进入体验」，或找老师核对</span>';
+            if (msgBox) msgBox.innerHTML = '<span class="bad">这所学校里没有找到该班级码，请核对学校名与班级码（也可以点「先进入体验」）</span>';
             break;
           }
           joinClassById(targetClass);
@@ -2367,9 +2754,9 @@
         break;
       }
       case 'export': {
-        var snap = leaderboard.snapshot({ range: 'today' });
-        var csv = '排名,学生,班级,今日积分,本周积分,总积分\n' + snap.entries.map(function (e2) {
-          return [e2.rank, e2.name, e2.klass, e2.points.today, e2.points.week, e2.points.total].join(',');
+        var snap = scopedSnapshot('today');
+        var csv = '排名,学生,学校,班级,今日积分,本周积分,总积分\n' + snap.entries.map(function (e2) {
+          return [e2.rank, e2.name, e2.school || S.user.school || '', e2.klass, e2.points.today, e2.points.week, e2.points.total].join(',');
         }).join('\n');
         download('跑酷学堂-成绩单.csv', '\ufeff' + csv);
         toast('成绩单已导出', 'ok');
@@ -2393,6 +2780,7 @@
     var action = el.getAttribute && el.getAttribute('data-action');
     if (!action) return;
     if (action === 'lb-subject') { ui.lbSubject = el.value; render(); }
+    else if (action === 'lb-class') { ui.lbClass = el.value; render(); }
     else if (action === 'filter-subject') { ui.questionFilter.subject = el.value; render(); }
     else if (action === 'filter-type') { ui.questionFilter.type = el.value; render(); }
     else if (action === 'filter-difficulty') { ui.questionFilter.difficulty = el.value; render(); }
@@ -2444,37 +2832,86 @@
     } else { fallbackCopy(text); done(); }
   }
 
-  function inviteLink(code) {
-    return location.origin + location.pathname + '#/student/join/' + code;
+  function inviteLink(code, school) {
+    var q = school ? ('?school=' + encodeURIComponent(school)) : '';
+    return location.origin + location.pathname + q + '#/student/join/' + code;
   }
 
   function openCreateClass() {
     if (!isTeacher()) { toast('请先切换到「老师」身份再创建班级', 'bad'); return; }
+    var gradeOptions = PK.GRADES.map(function (g) {
+      return '<option value="' + g.key + '">' + g.label + '（' + g.stage + '）</option>';
+    }).join('');
     var wrap = overlay(
       '<div class="row between"><h3 class="modal-title">创建班级</h3><button class="btn btn-ghost btn-sm" data-close>关闭</button></div>' +
-      '<p class="muted modal-sub">创建后会立刻弹出 4 位班级码，把它发给学生即可加入。</p>' +
-      '<div class="form-field"><label>班级名称</label><input class="input" id="ccName" placeholder="例如：五年级 3 班"></div>' +
+      '<p class="muted modal-sub">填好学校名与班级名后，<b>AI 会自动识别所属年级</b>（用于「同年级榜」和班级对比统计）；创建后会立刻弹出 4 位班级码。</p>' +
+      '<div class="grid grid-2">' +
+        '<div class="form-field"><label>学校名称</label><input class="input" id="ccSchool" maxlength="20" placeholder="例如：阳光小学" value="' + esc(S.user.school || '') + '"></div>' +
+        '<div class="form-field"><label>班级名称</label><input class="input" id="ccName" placeholder="例如：五年级 3 班"></div>' +
+      '</div>' +
+      '<div class="grid grid-2">' +
+        '<div class="form-field"><label>年级（AI 自动识别，可修改）</label>' +
+          '<select class="select" id="ccGrade"><option value="unknown">未识别 / 其它</option>' + gradeOptions + '</select>' +
+          '<div id="ccGradeHint" class="lb-sub">🤖 输入班级名称后自动识别年级</div></div>' +
+        '<div class="form-field"><label>学生人数（可留空）</label><input class="input" id="ccStudents" type="number" min="0" placeholder="0"></div>' +
+      '</div>' +
       '<div class="grid grid-2">' +
         '<div class="form-field"><label>授课老师</label><input class="input" id="ccTeacher" placeholder="例如：李老师"></div>' +
-        '<div class="form-field"><label>学生人数（可留空）</label><input class="input" id="ccStudents" type="number" min="0" placeholder="0"></div>' +
       '</div>' +
       '<div id="ccMsg" class="muted modal-sub"></div>' +
       '<div class="row" style="gap:10px;margin-top:6px"><button class="btn btn-teacher grow" id="ccSave">创建班级</button></div>'
     );
     wrap.querySelector('[data-close]').onclick = function () { wrap.remove(); };
+
+    // AI 自动识别年级：一边输入班级名一边更新
+    var nameInput = wrap.querySelector('#ccName');
+    var gradeSel = wrap.querySelector('#ccGrade');
+    var hint = wrap.querySelector('#ccGradeHint');
+    var gradeTouched = false;
+    gradeSel.addEventListener('change', function () { gradeTouched = true; });
+    nameInput.addEventListener('input', function () {
+      var g = PK.inferGrade(nameInput.value);
+      if (g.auto && !gradeTouched) gradeSel.value = g.key;
+      var byKey = PK.gradeByKey(gradeSel.value);
+      if (g.auto) {
+        hint.innerHTML = '🤖 AI 识别：<b>' + g.label + '</b>' + (g.stage ? '（' + g.stage + '）' : '') + '，可手动修改';
+      } else {
+        hint.innerHTML = nameInput.value ? '🤖 未能自动识别，请手动选择年级' : '🤖 输入班级名称后自动识别年级';
+      }
+      if (byKey) hint.innerHTML = hint.innerHTML.replace('可手动修改', '当前选择：' + byKey.label);
+    });
+
     wrap.querySelector('#ccSave').onclick = function () {
-      var name = wrap.querySelector('#ccName').value.trim();
+      var name = nameInput.value.trim();
+      var school = wrap.querySelector('#ccSchool').value.trim();
       var msg = wrap.querySelector('#ccMsg');
+      if (!school) { msg.innerHTML = '<span style="color:#c62c27">请填写学校名称</span>'; return; }
       if (!name) { msg.innerHTML = '<span style="color:#c62c27">请填写班级名称</span>'; return; }
+      var picked = PK.gradeByKey(gradeSel.value) || PK.inferGrade(name);
+      if (!picked || picked.key === 'unknown') picked = { key: 'unknown', label: '未识别', stage: '' };
       var cls = {
         id: uid('cls'),
         name: name.slice(0, 20),
         code: genClassCode(),
+        school: school.slice(0, 20),
+        gradeKey: picked.key,
+        gradeLabel: picked.label,
+        stage: picked.stage || '',
+        owner: S.user.name || '老师',
         teacher: wrap.querySelector('#ccTeacher').value.trim() || '我',
         students: Math.max(0, parseInt(wrap.querySelector('#ccStudents').value, 10) || 0),
         avg: 0, rate: 0, createdAt: Date.now()
       };
       S.classes.push(cls);
+      S.user.school = cls.school;
+      save();
+      if (leaderboard.publishClass) {
+        leaderboard.publishClass({
+          cid: cls.id, name: cls.name, code: cls.code, school: cls.school,
+          gradeKey: cls.gradeKey, gradeLabel: cls.gradeLabel, stage: cls.stage,
+          owner: cls.owner, teacher: cls.teacher, students: cls.students, at: cls.createdAt
+        });
+      }
       save();
       wrap.remove();
       ui.teacherTab = 'classes';
@@ -2486,10 +2923,13 @@
   function showClassCode(classId, justCreated) {
     var cls = classById(classId);
     if (!cls) return;
-    var link = inviteLink(cls.code);
+    var link = inviteLink(cls.code, cls.school);
     var wrap = overlay(
       '<div class="row between"><h3 class="modal-title">' + (justCreated ? '班级创建成功 🎉' : '班级码') + '</h3><button class="btn btn-ghost btn-sm" data-close>关闭</button></div>' +
-      '<p class="muted modal-sub">把下面 4 位班级码发给学生，学生在「学生端 → 加入班级」输入即可加入 <b>' + esc(cls.name) + '</b>。</p>' +
+      '<p class="muted modal-sub">学生要在登录时输入<b>同一所学校名</b> + 下面 4 位班级码，才算加入 <b>' + esc(cls.name) + '</b>。</p>' +
+      '<div class="ask-answer" style="margin-bottom:12px"><b>学校：</b>' + esc(cls.school || '—') +
+        '　<b>年级：</b>' + esc(cls.gradeLabel || '未识别') + (cls.stage ? '（' + esc(cls.stage) + '）' : '') +
+        '<div class="lb-sub">🤖 年级由 AI 根据班级名称自动识别，可在创建时修改</div></div>' +
       '<div class="code-box"><div class="code-label">班级码</div><div class="code-value">' + esc(cls.code) + '</div></div>' +
       '<div class="row" style="gap:10px;margin-top:14px;flex-wrap:wrap">' +
         '<button class="btn btn-teacher grow" data-copy-code>📋 复制班级码</button>' +
@@ -2510,19 +2950,25 @@
     }
     var wrap = overlay(
       '<div class="row between"><h3 class="modal-title">加入班级</h3><button class="btn btn-ghost btn-sm" data-close>关闭</button></div>' +
-      '<p class="muted modal-sub">请输入老师提供的 4 位数字班级码。</p>' +
+      '<p class="muted modal-sub">需要和老师<b>同校 + 同一个班级码</b>才算加入同一个班级。</p>' +
+      '<div class="form-field"><label>学校名称</label><input class="input" id="jcSchool" maxlength="20" placeholder="例如：阳光小学" value="' + esc(S.user.school || S.lastSchool || '') + '"></div>' +
       '<div class="form-field"><label>班级码</label><input class="input code-input" id="jcCode" inputmode="numeric" maxlength="4" placeholder="4 位数字" value="' + esc(prefill || '') + '"></div>' +
       '<div id="jcMsg" class="muted modal-sub"></div>' +
       '<div class="row" style="gap:10px;margin-top:6px"><button class="btn btn-primary grow" id="jcJoin">加入班级</button></div>'
     );
     wrap.querySelector('[data-close]').onclick = function () { wrap.remove(); };
+    var schoolInput = wrap.querySelector('#jcSchool');
     var input = wrap.querySelector('#jcCode');
     var msg = wrap.querySelector('#jcMsg');
     var doJoin = function () {
       var code = String(input.value || '').replace(/\s/g, '');
+      var school = schoolInput.value.trim();
+      if (!school) { msg.innerHTML = '<span style="color:#c62c27">请先填写学校名称</span>'; schoolInput.focus(); return; }
       if (!/^\d{4}$/.test(code)) { msg.innerHTML = '<span style="color:#c62c27">请输入 4 位数字班级码</span>'; return; }
-      var cls = classByCode(code);
-      if (!cls) { msg.innerHTML = '<span style="color:#c62c27">没有找到这个班级，请和老师核对班级码</span>'; return; }
+      var cls = classBySchoolCode(school, code);
+      if (!cls) { msg.innerHTML = '<span style="color:#c62c27">这所学校里没有找到该班级码，请核对学校名与班级码</span>'; return; }
+      S.user.school = school.slice(0, 20);
+      S.lastSchool = S.user.school;
       joinClassById(cls);
       save();
       wrap.remove();
