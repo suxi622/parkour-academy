@@ -18,7 +18,7 @@
      同一个主题名的所有设备共享同一份榜单；换主题名即可开一个独立榜单。 */
   var CLOUD = {
     base: 'https://ntfy.sh',
-    topic: 'pkacademy-v2-4m4tnfwq6md3r',
+    topic: 'pkacademy-v3-4m4tnfwq6md3r',   // v3：换新房间，彻底清掉历史测试数据
     sinceStream: '3h',
     sincePoll: '8h',
     publishMinGap: 600,
@@ -72,10 +72,14 @@
         id: rand('dev'),
         name: (opts.me && opts.me.name) || '小跑者',
         emoji: (opts.me && opts.me.emoji) || '🐱',
-        klass: (opts.me && opts.me.klass) || ''
+        klass: (opts.me && opts.me.klass) || '',
+        school: (opts.me && opts.me.school) || '',
+        gradeKey: (opts.me && opts.me.gradeKey) || '',
+        gradeLabel: (opts.me && opts.me.gradeLabel) || ''
       };
       writeStore(IDENTITY_KEY, identity);
     }
+    if (!identity.school && opts.me && opts.me.school) identity.school = opts.me.school;
     local.me.id = identity.id;
 
     function setMode(next, info) {
@@ -142,6 +146,9 @@
         name: e.name,
         emoji: e.emoji,
         klass: e.klass || '未分班',
+        school: e.school || '',
+        gradeKey: e.gradeKey || '',
+        gradeLabel: e.gradeLabel || '',
         isMe: e.id === account.participantId,
         isBot: !!e.isBot,
         demo: !!e.isBot,
@@ -202,6 +209,7 @@
       seen: {}
     };
     var farAsks = [];      // 从云端中继收到的「学生提问 / 老师回复」
+    var farClasses = [];   // 从云端中继收到的班级档案（跨设备共享班级信息）
 
     function cloudSelfSnapshot() {
       var me = local.me;
@@ -211,6 +219,9 @@
         name: identity.name,
         emoji: identity.emoji,
         klass: identity.klass || '未分班',
+        school: identity.school || '',
+        gradeKey: identity.gradeKey || '',
+        gradeLabel: identity.gradeLabel || '',
         points: { today: pts.today || 0, week: pts.week || 0, total: pts.total || 0 },
         subjectPoints: me.subjectPoints || {},
         streak: me.streak || 0,
@@ -233,6 +244,15 @@
         notifyCloud();
         return;
       }
+      // 班级档案：老师在 A 设备建班，学生 / 其他设备都能收到并加入
+      if (m.kind === 'class') {
+        var clsKey = 'c:' + (m.cid || '') + ':' + (m.at || 0);
+        if (cloud.seen[clsKey]) return;
+        cloud.seen[clsKey] = 1;
+        farClasses.push(m);
+        notifyCloud();
+        return;
+      }
       if (!m.p) return;
       if (m.msgId && cloud.seen[m.msgId]) return;
       if (m.msgId) cloud.seen[m.msgId] = 1;
@@ -242,7 +262,8 @@
         p = cloud.participants[m.p] = {
           id: m.p, name: m.n || '同学', emoji: m.e || '🙂', klass: m.k || '未分组',
           points: { today: 0, week: 0, total: 0 }, subjectPoints: {}, streak: 0,
-          correct: 0, total: 0, at: 0, _tt: -1, demo: false
+          correct: 0, total: 0, at: 0, _tt: -1, demo: false,
+          school: '', gradeKey: '', gradeLabel: ''
         };
       }
       var tt = Number(m.tt) || 0;
@@ -251,6 +272,9 @@
         p.name = m.n || p.name;
         p.emoji = m.e || p.emoji;
         p.klass = m.k || p.klass;
+        p.school = m.sc || p.school || '';
+        p.gradeKey = m.gr || p.gradeKey || '';
+        p.gradeLabel = m.grl || p.gradeLabel || '';
         p.points = { today: Number(m.tc) || 0, week: Number(m.tw) || 0, total: tt };
         if (m.sp && typeof m.sp === 'object') p.subjectPoints = m.sp;
         p.streak = Number(m.st) || 0;
@@ -269,6 +293,9 @@
             name: p.name,
             emoji: p.emoji,
             isMe: m.p === identity.id,
+            klass: p.klass || '',
+            school: p.school || '',
+            gradeKey: p.gradeKey || '',
             subject: PK.subjectByKey(m.s).name,
             subjectKey: m.s || 'math',
             gain: gain,
@@ -287,6 +314,7 @@
         v: 1,
         type: extra ? 'answer' : 'sync',
         p: identity.id, n: me.name, e: me.emoji, k: me.klass,
+        sc: me.school || '', gr: me.gradeKey || '', grl: me.gradeLabel || '',
         tc: me.points.today, tw: me.points.week, tt: me.points.total,
         sp: me.subjectPoints, st: me.streak, c: me.correct, a: me.total,
         at: Date.now()
@@ -393,6 +421,9 @@
         name: p.name,
         emoji: p.emoji,
         klass: p.klass || '未分班',
+        school: p.school || '',
+        gradeKey: p.gradeKey || '',
+        gradeLabel: p.gradeLabel || '',
         isMe: p.id === identity.id,
         demo: !!p.demo,
         online: p.demo ? true : (Date.now() - (p.at || 0) < 5 * 60 * 1000),
@@ -565,6 +596,9 @@
         identity.name = profile.name || identity.name;
         identity.emoji = profile.emoji || identity.emoji;
         identity.klass = profile.klass || identity.klass;
+        if (profile.school !== undefined) identity.school = profile.school || '';
+        if (profile.gradeKey !== undefined) identity.gradeKey = profile.gradeKey || '';
+        if (profile.gradeLabel !== undefined) identity.gradeLabel = profile.gradeLabel || '';
         writeStore(IDENTITY_KEY, identity);
         if (mode === 'remote' && account) {
           return post('/api/profile', {
@@ -572,7 +606,10 @@
             token: account.token,
             name: identity.name,
             emoji: identity.emoji,
-            klass: identity.klass
+            klass: identity.klass,
+            school: identity.school,
+            gradeKey: identity.gradeKey,
+            gradeLabel: identity.gradeLabel
           }).then(function (res) {
             if (res && res.ok && res.me) {
               remote.me.name = res.me.name;
@@ -598,6 +635,17 @@
 
       /* ---------- 学生提问 / 老师回复（云端中继；本机模式由 app.js 自己保存） ---------- */
       takeAsks: function () { var out = farAsks.slice(); farAsks = []; return out; },
+      takeClasses: function () { var out = farClasses.slice(); farClasses = []; return out; },
+      publishClass: function (payload) {
+        if (mode !== 'cloud') return false;
+        fetch(CLOUD.base + '/' + CLOUD.topic, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          cache: 'no-store',
+          body: JSON.stringify(Object.assign({ v: 1, kind: 'class' }, payload))
+        }).catch(function () {});
+        return true;
+      },
       publishQuestion: function (payload) {
         if (mode !== 'cloud') return false;
         fetch(CLOUD.base + '/' + CLOUD.topic, {
@@ -652,7 +700,10 @@
           token: account && account.token,
           name: identity.name,
           emoji: identity.emoji,
-          klass: identity.klass
+          klass: identity.klass,
+          school: identity.school,
+          gradeKey: identity.gradeKey,
+          gradeLabel: identity.gradeLabel
         };
         if (isNew) body.seed = { points: opts.me.points, subjectPoints: opts.me.subjectPoints, streak: opts.me.streak };
         return post('/api/join', body).then(function (res) {
