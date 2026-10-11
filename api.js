@@ -201,6 +201,7 @@
       publishTimer: null,
       seen: {}
     };
+    var farAsks = [];      // 从云端中继收到的「学生提问 / 老师回复」
 
     function cloudSelfSnapshot() {
       var me = local.me;
@@ -222,7 +223,17 @@
     function ingest(raw) {
       var m = raw;
       if (typeof m === 'string') { try { m = JSON.parse(m); } catch (e) { return; } }
-      if (!m || m.v !== 1 || !m.p) return;
+      if (!m || m.v !== 1) return;
+      // 学生提问 / 老师回复：走同一条中继，单独收集（不参与积分统计）
+      if (m.kind === 'ask' || m.kind === 'reply') {
+        var askKey = 'a:' + m.kind + ':' + (m.qid || '') + ':' + (m.at || 0);
+        if (cloud.seen[askKey]) return;
+        cloud.seen[askKey] = 1;
+        farAsks.push(m);
+        notifyCloud();
+        return;
+      }
+      if (!m.p) return;
       if (m.msgId && cloud.seen[m.msgId]) return;
       if (m.msgId) cloud.seen[m.msgId] = 1;
 
@@ -583,6 +594,29 @@
           identity = state.identity;
           local.me.id = identity.id;
         }
+      },
+
+      /* ---------- 学生提问 / 老师回复（云端中继；本机模式由 app.js 自己保存） ---------- */
+      takeAsks: function () { var out = farAsks.slice(); farAsks = []; return out; },
+      publishQuestion: function (payload) {
+        if (mode !== 'cloud') return false;
+        fetch(CLOUD.base + '/' + CLOUD.topic, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          cache: 'no-store',
+          body: JSON.stringify(Object.assign({ v: 1, kind: 'ask' }, payload))
+        }).catch(function () {});
+        return true;
+      },
+      publishReply: function (payload) {
+        if (mode !== 'cloud') return false;
+        fetch(CLOUD.base + '/' + CLOUD.topic, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          cache: 'no-store',
+          body: JSON.stringify(Object.assign({ v: 1, kind: 'reply' }, payload))
+        }).catch(function () {});
+        return true;
       }
     };
 
