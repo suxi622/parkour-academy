@@ -189,6 +189,13 @@
     var W = 900, H = 560, DPR = 1;
     var stars = [];
 
+    /** 统一管理浮层：没有内容时彻底隐藏，避免空浮层挡住手机的滑动操作 */
+    function setOverlay(html) {
+      overlay.innerHTML = html || '';
+      overlay.style.display = html ? '' : 'none';
+      overlay.style.pointerEvents = html ? '' : 'none';
+    }
+
     function resize() {
       var rect = shell.getBoundingClientRect();
       var cssW = Math.max(320, rect.width || 900);
@@ -449,7 +456,7 @@
       html.push('</div>');
       html.push('<div class="center muted" style="font-size:12px;margin-top:10px">答对：建筑爆金币（越难越多）· 加速前进 &nbsp;|&nbsp; 答错：扣 1 点生命 · 躲开建筑则不会出题</div>');
       html.push('</div></div>');
-      overlay.innerHTML = html.join('');
+      setOverlay(html.join(''));
 
       var selected = null;
       var body = overlay.querySelector('#qBody');
@@ -537,7 +544,7 @@
       }
 
       function finishQuestion() {
-        overlay.innerHTML = '';
+        setOverlay('');
         state.activeQuestion = null;
         state.activeObject = null;
         if (state.lives <= 0) return;
@@ -1511,7 +1518,7 @@
       if (opts.onEnd) opts.onEnd(state.result);
 
       var stars = victory ? (accuracy >= 90 ? '⭐⭐⭐' : accuracy >= 70 ? '⭐⭐' : '⭐') : '💥';
-      overlay.innerHTML =
+      setOverlay(
         '<div class="overlay"><div class="overlay-card result-card">' +
           '<div style="font-size:52px">' + (victory ? '🏁' : '💥') + '</div>' +
           '<div class="result-title">' + (victory ? '冲过终点！' : '生命耗尽') + '</div>' +
@@ -1536,7 +1543,7 @@
             '<button class="btn btn-primary grow" id="gAgain">再玩一次</button>' +
             '<button class="btn btn-ghost grow" id="gBack">返回学生端</button>' +
           '</div>' +
-        '</div></div>';
+        '</div></div>');
 
       var again = overlay.querySelector('#gAgain');
       var back = overlay.querySelector('#gBack');
@@ -1545,7 +1552,7 @@
     }
 
     function ready() {
-      overlay.innerHTML =
+      setOverlay(
         '<div class="overlay"><div class="overlay-card center">' +
           '<div class="ready-emoji">' + (theme.deco[0] || '🐱') + '</div>' +
           '<h2 class="ready-title" style="margin-top:8px;font-size:23px;font-weight:900">' + esc(subjectName) + ' · ' + esc(difficultyName) + '</h2>' +
@@ -1566,14 +1573,14 @@
             '<button class="btn btn-primary btn-lg grow" id="gStart">开始跑酷</button>' +
             '<button class="btn btn-ghost" id="gExit">返回</button>' +
           '</div>' +
-        '</div></div>';
+        '</div></div>');
       overlay.querySelector('#gStart').onclick = function () { startCountdown(); };
       overlay.querySelector('#gExit').onclick = function () { if (opts.onQuit) opts.onQuit(); };
     }
 
     /* ---------------- 倒计时 / 暂停 ---------------- */
     function startCountdown() {
-      overlay.innerHTML = '';
+      setOverlay('');
       var old = shell.querySelector('.game-countdown');
       if (old) old.remove();
       var cd = document.createElement('div');
@@ -1600,7 +1607,7 @@
     function pause() {
       if (state.phase !== 'playing') return;
       state.phase = 'paused';
-      overlay.innerHTML =
+      setOverlay(
         '<div class="overlay"><div class="overlay-card center">' +
           '<div style="font-size:44px">⏸️</div>' +
           '<h2 style="margin-top:8px;font-size:22px;font-weight:900">已暂停</h2>' +
@@ -1609,14 +1616,14 @@
             '<button class="btn btn-primary grow" id="gResume">继续跑酷</button>' +
             '<button class="btn btn-ghost" id="gQuit">退出</button>' +
           '</div>' +
-        '</div></div>';
+        '</div></div>');
       overlay.querySelector('#gResume').onclick = function () { resume(); };
       overlay.querySelector('#gQuit').onclick = function () { if (opts.onQuit) opts.onQuit(); };
     }
 
     function resume() {
       if (state.phase !== 'paused') return;
-      overlay.innerHTML = '';
+      setOverlay('');
       last = performance.now();
       state.phase = 'playing';
     }
