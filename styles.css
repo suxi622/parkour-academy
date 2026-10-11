@@ -881,6 +881,69 @@ body:not(.auth) .page { padding-top: 30px; }
 }
 
 /* ============================================================
+   伙伴成长 / 家园布置
+   ============================================================ */
+.home-room {
+  position: relative; border-radius: 20px; overflow: hidden; padding: 18px;
+  background: linear-gradient(180deg, #1b2440 0%, #2b3a5e 54%, #3b2f24 55%, #574433 100%);
+  border: 1px solid var(--line);
+}
+.home-wall { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 20% 22%, rgba(255,255,255,.14), transparent 42%), radial-gradient(circle at 78% 18%, rgba(255,255,255,.09), transparent 46%); }
+.home-slots { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.home-slot { position: relative; aspect-ratio: 1 / 0.78; border-radius: 14px; border: 1.6px dashed rgba(255,255,255,.25); background: rgba(255,255,255,.05); display: grid; place-items: center; }
+.home-slot.filled { border-style: solid; border-color: rgba(255,255,255,.34); background: rgba(255,255,255,.13); }
+.home-slot-hint { font-size: 11px; color: rgba(255,255,255,.45); }
+.home-deco { font-size: 30px; }
+.home-slot-x { position: absolute; top: 4px; right: 6px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: rgba(0,0,0,.45); color: #fff; cursor: pointer; line-height: 1; }
+.home-partner { position: relative; margin-top: 16px; display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.home-partner-art { font-size: 64px; filter: drop-shadow(0 8px 16px rgba(0,0,0,.37)); }
+.home-partner-plate { color: #fff; font-size: 13.5px; background: rgba(9,16,30,.5); border: 1px solid rgba(255,255,255,.16); border-radius: 999px; padding: 6px 14px; }
+.home-partner-say { color: #ffe9a8; font-size: 12.5px; }
+
+.partner-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(228px, 1fr)); gap: 12px; }
+.partner-card { border: 1.6px solid var(--line); border-radius: 18px; padding: 14px; background: #fff; }
+.partner-card.on { border-color: #c9e0ff; background: #f7fbff; }
+.partner-art { height: 76px; border-radius: 16px; display: grid; place-items: center; font-size: 42px; border: 1px solid var(--line); }
+
+/* ============================================================
+   伙伴聊天
+   ============================================================ */
+.chat-page { max-width: 880px; margin: 0 auto; }
+.chat-avatar { width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center; font-size: 28px; background: linear-gradient(140deg, #fff, #eef4ff); border: 1px solid var(--line); }
+.chat-box { background: #fff; border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow-sm); overflow: hidden; }
+.chat-list { height: 46vh; min-height: 280px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; background: linear-gradient(180deg, #fbfdff, #f5f9fd); }
+.chat-empty { margin: auto; text-align: center; color: var(--muted); font-size: 13px; display: grid; gap: 8px; }
+.chat-empty > :first-child { font-size: 40px; }
+.chat-msg { display: flex; gap: 8px; align-items: flex-end; }
+.chat-msg.me { justify-content: flex-end; }
+.chat-bubble { max-width: 76%; padding: 11px 14px; border-radius: 16px; font-size: 14px; line-height: 1.7; word-break: break-word; }
+.chat-msg.ai .chat-bubble { background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 6px; }
+.chat-msg.me .chat-bubble { background: linear-gradient(135deg, #57b3ff, #2b8cee); color: #fff; border-bottom-right-radius: 6px; }
+.chat-mini-avatar { width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; font-size: 17px; background: #eef4ff; border: 1px solid var(--line); flex-shrink: 0; }
+.chat-chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 14px 0; }
+.chat-chip { border: 1px solid #c9e0ff; background: #f3f9ff; color: var(--primary); font: inherit; font-size: 12.5px; font-weight: 700; padding: 6px 12px; border-radius: 999px; cursor: pointer; }
+.chat-chip:hover { background: #e6f2ff; }
+.chat-input-row { display: flex; gap: 10px; padding: 12px 14px 14px; }
+.chat-tip { font-size: 12px; margin-top: 10px; line-height: 1.75; }
+
+/* ============================================================
+   题目 / 作业附件（图片 · 链接）
+   ============================================================ */
+.q-image { display: block; max-width: 100%; max-height: 220px; border-radius: 12px; margin: 10px 0; border: 1px solid var(--line); }
+.hw-image { max-height: 140px; }
+.q-link { display: inline-block; margin-top: 6px; font-size: 13px; color: var(--primary); text-decoration: none; background: #f3f9ff; border: 1px solid #c9e0ff; border-radius: 999px; padding: 5px 12px; }
+.attach-preview { position: relative; margin-top: 8px; }
+.attach-preview img { display: block; max-width: 100%; max-height: 150px; border-radius: 10px; border: 1px solid var(--line); }
+.attach-x { position: absolute; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: rgba(0,0,0,.55); color: #fff; cursor: pointer; }
+.ready-partner { display: inline-block; margin-top: 8px; font-size: 12.5px; font-weight: 800; color: #6d28d9; background: #f4efff; border: 1px solid #d8c8ff; border-radius: 999px; padding: 5px 12px; }
+
+@media (max-width: 720px) {
+  .home-slots { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .chat-list { height: 52vh; }
+  .chat-bubble { max-width: 84%; }
+}
+
+/* ============================================================
    跑酷（v2）：进度条 / 金币 HUD / 答题奖励 / 规则卡
    ============================================================ */
 .hud-chip.gold { color: #ffe08a; }
