@@ -163,7 +163,12 @@
 
     var shell = container.querySelector('.game-shell');
     var canvas = container.querySelector('canvas');
-    var ctx = canvas.getContext('2d');
+    var ctx = canvas.getContext ? canvas.getContext('2d') : null;
+    if (!ctx) {
+      // 极少数环境没有 Canvas（或被策略禁用），给出提示而不是直接崩掉
+      container.innerHTML = '<div class="empty"><span class="em">🖼️</span>当前浏览器不支持 Canvas 画布，无法运行跑酷关卡。<br>请换用 Chrome / Edge / Safari 最新版打开。</div>';
+      return { destroy: function () {}, state: { phase: 'unsupported' } };
+    }
     var overlay = container.querySelector('#gOverlay');
     var comboEl = container.querySelector('#gComboBadge');
     var hudLives = container.querySelector('#gLives');
