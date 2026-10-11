@@ -945,9 +945,24 @@ body:not(.auth) .page { padding-top: 30px; }
 .hint-block { font-size: 12.5px; line-height: 1.9; text-align: left; background: #f7fafd; border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; margin-top: 14px; }
 .hint-touch { display: none; }
 
-/* 跑酷里的浮层不能拦截画布上的滑动操作：只有卡片本身接收点击 */
-.game-shell .overlay { pointer-events: none; }
-.game-shell .overlay > .overlay-card { pointer-events: auto; }
+/* 跑酷的「关卡介绍 / 答题卡 / 结算页」是整页浮层：
+   · 不受画布高度限制，手机上也能一屏看完、按钮不会被裁掉
+   · 只有卡片本身接收点击，画布上的滑动照常生效 */
+.game-overlay { position: fixed; inset: 0; z-index: 70; pointer-events: none; }
+.game-overlay > .overlay-card {
+  pointer-events: auto;
+  width: min(560px, 100%);
+  max-height: min(90vh, 760px);
+  max-height: min(90dvh, 760px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* 卡片里的按钮永远贴在卡片底部，内容再长也不会看不到「开始跑酷」 */
+.game-overlay .game-actions {
+  position: sticky; bottom: 0; z-index: 2;
+  margin-top: 14px; padding-top: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0), #fff 38%);
+}
 
 /* ============================================================
    学生提问 / 老师回复
@@ -1128,27 +1143,20 @@ body:not(.auth) .page { padding-top: 30px; }
   .rule-item p { font-size: 11px; line-height: 1.5; margin-top: 2px; }
   .ready-partner { font-size: 11.5px; }
 
-  /* ---------- 跑酷的「关卡介绍 / 答题 / 结算」在手机上铺满屏幕，不用上下滑 ---------- */
-  .game-shell .overlay {
-    position: fixed; inset: 0; z-index: 70;
-    padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
-    background: rgba(7, 13, 24, 0.72);
-    overflow: hidden;
-  }
-  .game-shell .overlay .overlay-card {
-    width: 100%; max-width: 520px;
+  /* ---------- 跑酷的「关卡介绍 / 答题 / 结算」：整页浮层 + 紧凑排版，一屏看完 ---------- */
+  .game-overlay { padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom)); }
+  .game-overlay > .overlay-card {
+    max-width: 520px;
     max-height: 88%;                                    /* 老浏览器兜底 */
     max-height: calc(100dvh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
-    overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding: 16px 15px;
   }
-  .game-shell .game-countdown { position: fixed; inset: 0; z-index: 71; }
   .ready-emoji { font-size: 38px; }
   .ready-title { font-size: 19px !important; }
-  .game-shell .overlay .overlay-card > p.muted { font-size: 12.5px !important; margin-top: 6px !important; }
+  .game-overlay .overlay-card > p.muted { font-size: 12.5px !important; margin-top: 6px !important; }
   .hint-block { margin-top: 10px !important; padding: 9px 11px !important; font-size: 11.5px !important; line-height: 1.6 !important; }
-  .game-shell .overlay .row { margin-top: 12px !important; }
-  .game-shell .overlay .row .btn-lg { min-height: 46px; font-size: 15px; }
+  .game-overlay .row { margin-top: 12px !important; }
+  .game-overlay .row .btn-lg { min-height: 46px; font-size: 15px; }
 
   /* ---------- 家园 / 伙伴 ---------- */
   .home-room { padding: 14px; border-radius: 16px; }
@@ -1207,21 +1215,39 @@ body:not(.auth) .page { padding-top: 30px; }
 
 /* ---------- 屏幕不高的手机：进一步压缩关卡介绍，保证一屏看完 ---------- */
 @media (max-width: 720px) and (max-height: 760px) {
-  .game-shell .overlay .overlay-card { padding: 14px 13px; }
+  .game-overlay > .overlay-card { padding: 14px 13px; }
   .ready-emoji { font-size: 30px; }
   .ready-title { font-size: 17px !important; margin-top: 4px !important; }
   .ready-partner { font-size: 11px; padding: 4px 10px; margin-top: 6px; }
-  .game-shell .overlay .overlay-card > p.muted { font-size: 11.5px !important; }
+  .game-overlay .overlay-card > p.muted { font-size: 11.5px !important; }
   .rule-item p { display: none; }
   .rule-item { padding: 8px 9px; }
   .hint-block { margin-top: 8px !important; padding: 8px 10px !important; font-size: 11px !important; }
-  .game-shell .overlay .row { margin-top: 10px !important; gap: 8px !important; }
-  .game-shell .overlay .row .btn-lg { min-height: 42px; font-size: 14px; }
+  .game-overlay .row { margin-top: 10px !important; gap: 8px !important; }
+  .game-overlay .row .btn-lg { min-height: 42px; font-size: 14px; }
 }
 
 @media (max-width: 720px) and (max-height: 620px) {
   .hint-block { display: none; }
   .ready-emoji { display: none; }
+}
+
+/* ---------- 手机端：跑酷整页沉浸式，画面铺满屏幕 ---------- */
+@media (max-width: 720px) {
+  body.game-page { overflow: hidden; }
+  body.game-page .topbar { display: none; }
+  body.game-page .mobile-nav { display: none; }
+  body.game-page .page { padding: 0; max-width: 100%; }
+  body.game-page .page > .fade-in > .row.between { display: none; }   /* 关卡标题与返回按钮交给暂停菜单 */
+  body.game-page #gameHost { display: block; }
+  body.game-page .game-shell {
+    border-radius: 0; box-shadow: none; border: 0;
+    width: 100%;
+  }
+  body.game-page .game-hud {
+    padding: calc(10px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
+  }
+  body.game-page .game-hud .hud-row:first-child { padding-right: 92px; }
 }
 
 /* ============================================================
