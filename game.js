@@ -97,6 +97,11 @@
     var subjectName = opts.subjectName || '数学';
     var difficultyName = opts.difficultyName || '基础关卡';
     var theme = themeFor(opts.subjectKey || (questions[0] && questions[0].subject) || 'math');
+    var runner = opts.runner || 'partner-cat';          // 当前出战伙伴（在「我的家园」购买/装备）
+    var partnerName = opts.partnerName || '伙伴';
+    var partnerLevel = Math.max(1, Number(opts.partnerLevel) || 1);
+    var coinBonusPct = Math.max(0, Number(opts.coinBonusPct) || 0);
+    var scoreBonusPct = Math.max(0, Number(opts.scoreBonusPct) || 0);
 
     var state = {
       phase: 'ready',            // ready | countdown | playing | question | paused | finished
@@ -412,7 +417,8 @@
     function rewardFor(q, o) {
       var base = coinBase(q);
       var comboBonus = Math.round(base * Math.min(state.combo, 10) * 0.05);
-      return (base + comboBonus) * (o && o.boss ? 3 : 1);
+      var raw = (base + comboBonus) * (o && o.boss ? 3 : 1);
+      return Math.round(raw * (1 + coinBonusPct / 100));   // 伙伴等级越高，金币越多
     }
 
     function renderQuestion(q, o) {
@@ -422,6 +428,10 @@
       html.push('<div class="row between"><span class="q-type-chip">' + questionTypeName(q.type) + '</span>');
       html.push('<span class="q-reward">答对可得 <b>+' + (o && o.boss ? base * 3 : base) + '</b> 🪙</span></div>');
       html.push('<div class="q-content">' + esc(q.content) + '</div>');
+      if (q.image) html.push('<img class="q-image" src="' + esc(q.image) + '" alt="题目配图">');
+      if (q.link && q.link.url) {
+        html.push('<a class="q-link" href="' + esc(q.link.url) + '" target="_blank" rel="noopener">🔗 ' + esc(q.link.title || '参考资料') + '</a>');
+      }
       html.push('<div id="qBody">');
       if (q.type === 'fill') {
         html.push('<input class="fill-input" id="qFill" placeholder="在这里输入答案，回车提交" autocomplete="off" />');
@@ -501,7 +511,7 @@
           state.bestCombo = Math.max(state.bestCombo, state.combo);
           state.gold += gain;
           state.lastCoin = gain;
-          state.score += CFG.CORRECT_SCORE + state.combo * 10 + Math.round(gain * 2);
+          state.score += Math.round((CFG.CORRECT_SCORE + state.combo * 10 + Math.round(gain * 2)) * (1 + scoreBonusPct / 100));
           state.speed = Math.min(CFG.MAX_SPEED, state.speed + CFG.SPEED_UP);
           state.goodFlash = 0.35;
           if (o) {
@@ -1084,13 +1094,13 @@
         for (var i = 1; i <= 3; i++) {
           ctx.save();
           ctx.globalAlpha = 0.14 * (1 - i / 4) * (0.5 + speedT);
-          drawCat(x - i * 18 * s, y, s, state.elapsed - i * 0.02, { jumping: false, ghost: true });
+          drawRunner(runner, x - i * 18 * s, y, s, state.elapsed - i * 0.02, { jumping: false, ghost: true });
           ctx.restore();
         }
       }
 
       if (state.invuln > 0 && Math.floor(state.invuln * 12) % 2 === 0) ctx.globalAlpha = 0.45;
-      drawCat(x, y, s, state.elapsed, { jumping: jumping });
+      drawRunner(runner, x, y, s, state.elapsed, { jumping: jumping });
       ctx.globalAlpha = 1;
 
       if (state.invuln > 0) {
@@ -1100,6 +1110,231 @@
         ctx.lineWidth = 3;
         ctx.stroke();
       }
+    }
+
+    /** 出战伙伴：买谁就用谁跑酷 */
+    function drawRunner(kind, x, y, s, t, o) {
+      if (kind === 'partner-dino') return drawDino(x, y, s, t, o);
+      if (kind === 'partner-rocket') return drawRocket(x, y, s, t, o);
+      if (kind === 'partner-unicorn') return drawUnicorn(x, y, s, t, o);
+      return drawCat(x, y, s, t, o);
+    }
+
+    function drawDino(x, y, s, t, o) {
+      var jumping = o && o.jumping;
+      var run = jumping ? 0 : Math.sin(t * 17);
+      var run2 = jumping ? 0 : Math.sin(t * 17 + Math.PI);
+      var body = '#4ade80', dark = '#22a95c', belly = '#e8fcef', spike = '#166534', ink = '#0f2b1a';
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(s, s);
+
+      // 尾巴 + 尾刺
+      ctx.fillStyle = body;
+      ctx.beginPath();
+      ctx.moveTo(-10, -22);
+      ctx.quadraticCurveTo(-38, -18 + run * 5, -46, -38 + run * 8);
+      ctx.quadraticCurveTo(-30, -30, -12, -32);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = spike;
+      [0, 1, 2].forEach(function (i) {
+        var tx = -20 - i * 9, ty = -24 - i * 3 + run * 4;
+        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx - 6, ty - 12); ctx.lineTo(tx + 5, ty - 3); ctx.closePath(); ctx.fill();
+      });
+
+      // 远侧腿
+      ctx.strokeStyle = dark; ctx.lineWidth = 9; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-6, -14); ctx.lineTo(-6, -2 + (jumping ? -8 : run * 6)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(8, -14); ctx.lineTo(9, -2 + (jumping ? -10 : run2 * 6)); ctx.stroke();
+
+      // 身体
+      ctx.fillStyle = body;
+      roundRect(-17, -40, 34, 30, 13); ctx.fill();
+      ctx.fillStyle = belly;
+      roundRect(-9, -33, 19, 20, 8); ctx.fill();
+
+      // 背刺
+      ctx.fillStyle = spike;
+      [0, 1, 2].forEach(function (i) {
+        var sx = -10 + i * 11, sy = -40;
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + 5, sy - 13); ctx.lineTo(sx + 10, sy); ctx.closePath(); ctx.fill();
+      });
+
+      // 近侧腿
+      ctx.strokeStyle = body; ctx.lineWidth = 10;
+      ctx.beginPath(); ctx.moveTo(-4, -14); ctx.lineTo(-3, -1 + (jumping ? -5 : run2 * 7)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(11, -1 + (jumping ? -12 : run * 7)); ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-3, -1 + (jumping ? -5 : run2 * 7), 4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(11, -1 + (jumping ? -12 : run * 7), 4, 0, Math.PI * 2); ctx.fill();
+
+      // 小手
+      ctx.strokeStyle = body; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(6, -30); ctx.lineTo(15, -26 + run2 * 3); ctx.stroke();
+
+      // 头 + 吻部
+      ctx.fillStyle = body;
+      ctx.beginPath(); ctx.arc(0, -52, 17, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(13, -47, 12, 9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = belly;
+      ctx.beginPath(); ctx.ellipse(15, -44, 8, 5.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.beginPath(); ctx.arc(12, -51, 1.2, 0, Math.PI * 2); ctx.fill();
+      // 头顶小刺
+      ctx.fillStyle = spike;
+      ctx.beginPath(); ctx.moveTo(-4, -66); ctx.lineTo(0, -76); ctx.lineTo(5, -66); ctx.closePath(); ctx.fill();
+      // 眼睛
+      var blink = (Math.sin(t * 1.6) > 0.985) ? 0.2 : 1;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.ellipse(-6, -55, 4.6, 5 * blink, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(5, -55, 4.6, 5 * blink, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = ink;
+      ctx.beginPath(); ctx.arc(-5.4, -55, 2.2, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(5.6, -55, 2.2, 0, Math.PI * 2); ctx.fill();
+      // 牙
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.moveTo(14, -41); ctx.lineTo(17, -41); ctx.lineTo(15.5, -37); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    function drawRocket(x, y, s, t, o) {
+      var jumping = o && o.jumping;
+      var flame = jumping ? 1.5 : 1 + Math.abs(Math.sin(t * 22)) * 0.6;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(s, s);
+
+      // 尾焰
+      var fy = jumping ? -6 : 0;
+      var fg = ctx.createLinearGradient(0, fy, 0, fy + 34 * flame);
+      fg.addColorStop(0, '#fff1a8');
+      fg.addColorStop(0.45, '#ffb020');
+      fg.addColorStop(1, 'rgba(255,90,40,0)');
+      ctx.fillStyle = fg;
+      ctx.beginPath();
+      ctx.moveTo(-11, fy);
+      ctx.quadraticCurveTo(0, fy + 40 * flame, 11, fy);
+      ctx.closePath();
+      ctx.fill();
+
+      // 尾翼
+      ctx.fillStyle = '#ef524d';
+      ctx.beginPath(); ctx.moveTo(-14, -34); ctx.lineTo(-30, -8 + (jumping ? -6 : 0)); ctx.lineTo(-13, -10); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(14, -34); ctx.lineTo(30, -8 + (jumping ? -6 : 0)); ctx.lineTo(13, -10); ctx.closePath(); ctx.fill();
+
+      // 箭体
+      var bg = ctx.createLinearGradient(-16, 0, 16, 0);
+      bg.addColorStop(0, '#f8fafc');
+      bg.addColorStop(0.45, '#e2e8f0');
+      bg.addColorStop(1, '#94a3b8');
+      ctx.fillStyle = bg;
+      roundRect(-15, -58, 30, 54, 13); ctx.fill();
+
+      // 头锥
+      ctx.fillStyle = '#ef524d';
+      ctx.beginPath();
+      ctx.moveTo(-15, -58);
+      ctx.quadraticCurveTo(0, -92, 15, -58);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.beginPath(); ctx.moveTo(-15, -58); ctx.quadraticCurveTo(-6, -80, -2, -84); ctx.lineTo(-2, -58); ctx.closePath(); ctx.fill();
+
+      // 舷窗
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath(); ctx.arc(0, -42, 9.5, 0, Math.PI * 2); ctx.fill();
+      var wg = ctx.createRadialGradient(-3, -45, 1, 0, -42, 9);
+      wg.addColorStop(0, '#bae6fd');
+      wg.addColorStop(1, '#1d4ed8');
+      ctx.fillStyle = wg;
+      ctx.beginPath(); ctx.arc(0, -42, 7.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-2.6, -44.6, 2, 0, Math.PI * 2); ctx.fill();
+
+      // 小眼睛（画在舷窗下方，让它更可爱）
+      ctx.fillStyle = '#1b2437';
+      ctx.beginPath(); ctx.arc(-6.5, -24, 2.1, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(6.5, -24, 2.1, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#1b2437'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(0, -21, 3.4, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawUnicorn(x, y, s, t, o) {
+      var jumping = o && o.jumping;
+      var run = jumping ? 0 : Math.sin(t * 17);
+      var run2 = jumping ? 0 : Math.sin(t * 17 + Math.PI);
+      var fur = '#fdf2f8', shade = '#f3d9e8', ink = '#4a3550';
+      var mane = ['#f9a8d4', '#fcd34d', '#7dd3fc', '#a7f3d0', '#c4b5fd'];
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(s, s);
+
+      // 彩虹尾巴
+      mane.forEach(function (col, i) {
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 4.4;
+        ctx.beginPath();
+        ctx.moveTo(-12, -30);
+        ctx.quadraticCurveTo(-30 - i * 3, -22 + run * 5, -34 - i * 2, -44 + run * 7 + i * 3);
+        ctx.stroke();
+      });
+
+      // 远侧腿
+      ctx.strokeStyle = shade; ctx.lineWidth = 8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-6, -14); ctx.lineTo(-6, -2 + (jumping ? -8 : run * 6)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(8, -14); ctx.lineTo(9, -2 + (jumping ? -10 : run2 * 6)); ctx.stroke();
+
+      // 身体
+      ctx.fillStyle = fur;
+      roundRect(-17, -42, 34, 32, 14); ctx.fill();
+      ctx.fillStyle = shade;
+      roundRect(-9, -30, 18, 16, 7); ctx.fill();
+
+      // 近侧腿
+      ctx.strokeStyle = fur; ctx.lineWidth = 9;
+      ctx.beginPath(); ctx.moveTo(-4, -14); ctx.lineTo(-3, -1 + (jumping ? -5 : run2 * 7)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(11, -1 + (jumping ? -12 : run * 7)); ctx.stroke();
+      ctx.fillStyle = '#e9d5ff';
+      ctx.beginPath(); ctx.arc(-3, -1 + (jumping ? -5 : run2 * 7), 3.6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(11, -1 + (jumping ? -12 : run * 7), 3.6, 0, Math.PI * 2); ctx.fill();
+
+      // 头
+      ctx.fillStyle = fur;
+      ctx.beginPath(); ctx.arc(0, -54, 17, 0, Math.PI * 2); ctx.fill();
+      // 耳朵
+      ctx.beginPath(); ctx.moveTo(-14, -60); ctx.lineTo(-9, -74); ctx.lineTo(-1, -64); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(14, -60); ctx.lineTo(9, -74); ctx.lineTo(1, -64); ctx.closePath(); ctx.fill();
+      // 鬃毛
+      mane.forEach(function (col, i) {
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.ellipse(-6 + (i % 2) * 12, -62 - i * 3.2, 7, 4.4, (i % 2 ? 0.5 : -0.5), 0, Math.PI * 2);
+        ctx.fill();
+      });
+      // 角
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath(); ctx.moveTo(-4, -66); ctx.lineTo(1, -84); ctx.lineTo(5, -65); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(-1, -72); ctx.lineTo(3, -70); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, -77); ctx.lineTo(3, -75.5); ctx.stroke();
+      // 眼睛
+      var blink = (Math.sin(t * 1.6) > 0.985) ? 0.2 : 1;
+      ctx.fillStyle = ink;
+      ctx.beginPath(); ctx.ellipse(-6, -56, 3, 3.6 * blink, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(6, -56, 3, 3.6 * blink, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-5, -57.4, 1.1, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(7, -57.4, 1.1, 0, Math.PI * 2); ctx.fill();
+      // 腮红
+      ctx.fillStyle = 'rgba(249,168,212,0.7)';
+      ctx.beginPath(); ctx.ellipse(-11, -50, 4, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(11, -50, 4, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+      // 鼻子
+      ctx.fillStyle = '#f9a8d4';
+      ctx.beginPath(); ctx.moveTo(0, -50.6); ctx.lineTo(-2.4, -48); ctx.lineTo(2.4, -48); ctx.closePath(); ctx.fill();
+      ctx.restore();
     }
 
     function drawCat(x, y, s, t, o) {
@@ -1312,6 +1547,8 @@
         '<div class="overlay"><div class="overlay-card center">' +
           '<div style="font-size:50px">🐱</div>' +
           '<h2 style="margin-top:8px;font-size:23px;font-weight:900">' + esc(subjectName) + ' · ' + esc(difficultyName) + '</h2>' +
+          '<div class="ready-partner">🐾 出战伙伴：' + esc(partnerName) + ' Lv' + partnerLevel +
+            (coinBonusPct > 0 ? '（金币 +' + coinBonusPct + '%、分数 +' + scoreBonusPct + '%）' : '') + '</div>' +
           '<p class="muted" style="margin-top:8px;font-size:13.5px">跑起来，撞到建筑就会出题，答对让建筑爆金币</p>' +
           '<div class="rule-grid">' +
             '<div class="rule-item"><span>🏢</span><div><b>撞建筑 → 出题</b><p>换道或跳跃躲开就不会出题</p></div></div>' +
@@ -1459,7 +1696,8 @@
         window.removeEventListener('resize', resize);
       },
       state: state,
-      theme: theme
+      theme: theme,
+      partner: { id: runner, name: partnerName, level: partnerLevel, coinBonusPct: coinBonusPct, scoreBonusPct: scoreBonusPct }
     };
   }
 
