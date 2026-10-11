@@ -235,6 +235,45 @@
     return hit[0] || null;
   }
 
+  /**
+   * 按「学校 + 班级码」找班级：先看本机，本机没有就立刻向云端中继查一次，
+   * 这样老师在自己手机建的班，学生用另一台手机也能马上加入。
+   */
+  function resolveClass(school, code, cb) {
+    var local = classBySchoolCode(school, code);
+    if (local) { cb(local); return; }
+    if (!leaderboard.refreshCloud) { cb(null); return; }
+    leaderboard.refreshCloud().then(function () {
+      var far = leaderboard.takeClasses ? leaderboard.takeClasses() : [];
+      var changed = false;
+      far.forEach(function (m) { if (mergeClass(m)) changed = true; });
+      if (changed) { healGrades(); save(); }
+      cb(classBySchoolCode(school, code) || null);
+    }).catch(function () { cb(null); });
+  }
+
+  /** 异步回调里写提示文字：按 id 重新查询，避免页面重渲染后写到已销毁的节点上 */
+  function setMsgById(id, html) {
+    var el = document.getElementById(id);
+    if (el) { el.innerHTML = html; return true; }
+    return false;
+  }
+
+  /** 老师每隔一阵把班级档案重新发一遍，保证学生随时能查到（换了设备也不怕） */
+  var lastClassPublish = 0;
+  function republishClasses() {
+    if (!isTeacher() || !leaderboard.publishClass) return;
+    if (Date.now() - lastClassPublish < 60000) return;
+    lastClassPublish = Date.now();
+    leadingClasses().forEach(function (c) {
+      leaderboard.publishClass({
+        cid: c.id, name: c.name, code: c.code, school: c.school,
+        gradeKey: c.gradeKey, gradeLabel: c.gradeLabel, stage: c.stage,
+        owner: c.owner, teacher: c.teacher, students: c.students, at: c.createdAt
+      });
+    });
+  }
+
   /** 老师自己带领的班级（同一所学校的班级） */
   function leadingClasses() {
     var sc = normSchool(S.user.school);
@@ -667,7 +706,7 @@
                 '<input class="input" id="lgName" maxlength="12" placeholder="例如：小明" value="' + esc(S.user.name || '') + '"></div>' +
               '<div class="form-field"><label>班级码 <span class="opt-tag">选填</span></label>' +
                 '<input class="input code-input" id="lgCode" inputmode="numeric" maxlength="4" placeholder="老师给的 4 位数字" value="' + esc(ui.joinCode || (cls ? cls.code : '')) + '"></div>' +
-              '<div id="lgMsg" class="login-msg"></div>' +
+              '<div id="lgMsg" class="login-msg">' + (ui.loginMsg || '') + '</div>' +
               '<button class="btn btn-primary btn-lg btn-block" data-action="login-enter" data-role="student">🚀 进入学生端</button>' +
               '<button class="btn btn-ghost btn-block" data-action="login-enter" data-role="student" data-skip="1">暂时没有班级码，先进入体验</button>' +
               '<p class="login-tip">' +
@@ -681,7 +720,7 @@
                 '<input class="input" id="lgSchool" maxlength="20" placeholder="例如：阳光小学" value="' + esc(S.user.school || S.lastSchool || '') + '"></div>' +
               '<div class="form-field"><label>你的称呼</label>' +
                 '<input class="input" id="lgName" maxlength="12" placeholder="例如：李老师" value="' + esc(S.user.name || '') + '"></div>' +
-              '<div id="lgMsg" class="login-msg"></div>' +
+              '<div id="lgMsg" class="login-msg">' + (ui.loginMsg || '') + '</div>' +
               '<button class="btn btn-teacher btn-lg btn-block" data-action="login-enter" data-role="teacher">🧑‍🏫 进入教师端</button>' +
               '<p class="login-tip">老师不需要班级码。进入后到「班级学情」创建班级，会立刻弹出班级码发给学生。</p>' +
             '</div>') +
@@ -2589,7 +2628,13 @@
       if (farCls.length) {
         var clsChanged = false;
         farCls.forEach(function (m) { if (mergeClass(m)) clsChanged = true; });
-        if (clsChanged) { healGrades(); save(); if (!currentGame) render(); }
+        // 有弹窗打开时不要自动整页重渲染，否则会把用户正在填写的内容（加入班级 / 提问）冲掉
+        if (clsChanged) {
+          healGrades();
+          save();
+          // 登录页没有被登录、或正开着弹窗时，不要自动整页重渲染（会把用户正在填的内容冲掉）
+          if (S.loggedIn && !currentGame && !document.querySelector('.overlay.modal')) render();
+        }
       }
 
       var far = (leaderboard.takeAsks ? leaderboard.takeAsks() : []);
@@ -2612,12 +2657,13 @@
           Array.prototype.forEach.call(document.querySelectorAll('textarea[id^="askReply-"]'), function (t) {
             if (t.value.trim()) typing = true;
           });
-          if (!currentGame && !typing) render();
+          if (S.loggedIn && !currentGame && !typing && !document.querySelector('.overlay.modal')) render();
         }
       }
 
       renderTopStats();
       var snap = scopedSnapshot('today');
+      republishClasses();     // 老师端定期重发班级档案，学生才能随时查到
 
       var homeLb = document.querySelector('[data-live="home-lb"]');
       if (homeLb) homeLb.innerHTML = leaderboardRows(snap.entries.slice(0, 6), false);
@@ -2756,6 +2802,7 @@
         break;
       case 'login-role':
         ui.loginRole = actionEl.getAttribute('data-role') || 'student';
+        ui.loginMsg = '';
         render();
         break;
       case 'login-enter': {
@@ -2791,24 +2838,36 @@
         }
         var codeInput = $('#lgCode');
         var code = codeInput ? String(codeInput.value || '').replace(/\s/g, '') : '';
+        var finishStudentLogin = function () {
+          enterApp('student', loginName);
+          ui.loginRole = 'student';
+          toast('欢迎，' + loginName + (myClass() ? '，已加入 ' + myClass().name : ''), 'ok');
+          location.hash = '#/student';
+          render();
+          maybeFirstGuide();
+        };
         if (code && !skipCode) {
           if (!/^\d{4}$/.test(code)) {
             if (msgBox) msgBox.innerHTML = '<span class="bad">班级码是 4 位数字，请检查一下</span>';
             break;
           }
-          var targetClass = classBySchoolCode(loginSchool, code);
-          if (!targetClass) {
-            if (msgBox) msgBox.innerHTML = '<span class="bad">这所学校里没有找到该班级码，请核对学校名与班级码（也可以点「先进入体验」）</span>';
-            break;
-          }
-          joinClassById(targetClass);
+          if (msgBox) msgBox.innerHTML = '🔍 正在查找班级…';
+          ui.loginMsg = '';
+          var localCls = classBySchoolCode(loginSchool, code);
+          if (localCls) { joinClassById(localCls); finishStudentLogin(); break; }
+          resolveClass(loginSchool, code, function (cls) {
+            if (!cls) {
+              var errHtml = '<span class="bad">没找到这个班级：请确认学校名与老师给的一致，班级码为 4 位数字（也可以点「先进入体验」稍后再加入）</span>';
+              ui.loginMsg = errHtml;      // 记住提示，页面万一重渲染也还在
+              if (!setMsgById('lgMsg', errHtml)) { render(); toast('没找到这个班级，请核对学校名与班级码', 'bad'); }
+              return;
+            }
+            joinClassById(cls);
+            finishStudentLogin();
+          });
+          break;
         }
-        enterApp('student', loginName);
-        ui.loginRole = 'student';
-        toast('欢迎，' + loginName + (myClass() ? '，已加入 ' + myClass().name : ''), 'ok');
-        location.hash = '#/student';
-        render();
-        maybeFirstGuide();
+        finishStudentLogin();
         break;
       }
       case 'logout':
@@ -3213,7 +3272,11 @@
       '<div class="form-field"><label>学校名称</label><input class="input" id="jcSchool" maxlength="20" placeholder="例如：阳光小学" value="' + esc(S.user.school || S.lastSchool || '') + '"></div>' +
       '<div class="form-field"><label>班级码</label><input class="input code-input" id="jcCode" inputmode="numeric" maxlength="4" placeholder="4 位数字" value="' + esc(prefill || '') + '"></div>' +
       '<div id="jcMsg" class="muted modal-sub"></div>' +
-      '<div class="row" style="gap:10px;margin-top:6px"><button class="btn btn-primary grow" id="jcJoin">加入班级</button></div>'
+      '<div class="row" style="gap:10px;margin-top:6px">' +
+        '<button class="btn btn-primary grow" id="jcJoin">加入班级</button>' +
+        '<button class="btn btn-ghost" data-retry type="button">重新查找</button>' +
+      '</div>' +
+      '<p class="muted modal-sub" style="margin-top:10px">加入不了？请让老师在「教师端 → 班级学情」里点开班级码再发你一次，并确认<b>学校名完全一致</b>（差一个字都不算同一所学校）。</p>'
     );
     wrap.querySelector('[data-close]').onclick = function () { wrap.remove(); };
     var schoolInput = wrap.querySelector('#jcSchool');
@@ -3222,21 +3285,35 @@
     var doJoin = function () {
       var code = String(input.value || '').replace(/\s/g, '');
       var school = schoolInput.value.trim();
-      if (!school) { msg.innerHTML = '<span style="color:#c62c27">请先填写学校名称</span>'; schoolInput.focus(); return; }
-      if (!/^\d{4}$/.test(code)) { msg.innerHTML = '<span style="color:#c62c27">请输入 4 位数字班级码</span>'; return; }
-      var cls = classBySchoolCode(school, code);
-      if (!cls) { msg.innerHTML = '<span style="color:#c62c27">这所学校里没有找到该班级码，请核对学校名与班级码</span>'; return; }
-      S.user.school = school.slice(0, 20);
-      S.lastSchool = S.user.school;
-      joinClassById(cls);
-      save();
-      wrap.remove();
-      toast('已加入「' + cls.name + '」', 'ok');
-      confetti(40);
-      render();
+      var joinBtn = wrap.querySelector('#jcJoin');
+      if (!school) { msg.innerHTML = '<span class="bad">请先填写学校名称</span>'; schoolInput.focus(); toast('请先填写学校名称', 'bad'); return; }
+      if (!/^\d{4}$/.test(code)) { msg.innerHTML = '<span class="bad">请输入 4 位数字班级码</span>'; toast('班级码要是 4 位数字哦', 'bad'); return; }
+      msg.innerHTML = '🔍 正在查找班级…';
+      if (joinBtn) { joinBtn.disabled = true; joinBtn.textContent = '查找中…'; }
+      resolveClass(school, code, function (cls) {
+        var alive = document.body.contains(wrap);
+        var btnNow = document.getElementById('jcJoin');
+        if (btnNow) { btnNow.disabled = false; btnNow.textContent = '加入班级'; }
+        if (!cls) {
+          var errHtml = '<span class="bad">没找到这个班级：请确认「学校名」和老师给的一致，班级码是老师教师端里的 4 位数字。<br>也可以点「重新查找」再试一次。</span>';
+          if (setMsgById('jcMsg', errHtml)) toast('没找到这个班级，请核对学校名与班级码', 'bad');
+          else toast('没找到这个班级，请核对学校名与班级码', 'bad');
+          return;
+        }
+        S.user.school = school.slice(0, 20);
+        S.lastSchool = S.user.school;
+        joinClassById(cls);
+        save();
+        if (alive) wrap.remove();
+        toast('已加入「' + cls.name + '」（' + (cls.gradeLabel || '年级未识别') + '）', 'ok');
+        confetti(40);
+        render();
+      });
     };
     wrap.querySelector('#jcJoin').onclick = doJoin;
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter') doJoin(); });
+    var retryBtn = wrap.querySelector('[data-retry]');
+    if (retryBtn) retryBtn.onclick = function () { msg.innerHTML = ''; doJoin(); };
     setTimeout(function () { input.focus(); }, 30);
   }
 
