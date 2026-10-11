@@ -18,7 +18,7 @@
      同一个主题名的所有设备共享同一份榜单；换主题名即可开一个独立榜单。 */
   var CLOUD = {
     base: 'https://ntfy.sh',
-    topic: 'pkacademy-v3-4m4tnfwq6md3r',   // v3：换新房间，彻底清掉历史测试数据
+    topic: 'pkacademy-v4-4m4tnfwq6md3r',   // v4：换新房间，彻底清掉历史测试数据（未登录也不再发布）
     sinceStream: '3h',
     sincePoll: '8h',
     publishMinGap: 600,
@@ -199,6 +199,7 @@
     var cloud = {
       participants: {},
       events: [],
+      ready: false,          // 登录后才向云端发布，避免游客/测试数据污染榜单
       stream: null,
       poll: null,
       watch: null,
@@ -309,6 +310,7 @@
 
     function publishSelf(extra) {
       if (mode !== 'cloud') return;
+      if (!cloud.ready) return;
       var me = cloudSelfSnapshot();
       var msg = {
         v: 1,
@@ -635,6 +637,12 @@
 
       /* ---------- 学生提问 / 老师回复（云端中继；本机模式由 app.js 自己保存） ---------- */
       takeAsks: function () { var out = farAsks.slice(); farAsks = []; return out; },
+      /** 登录完成后再开始向云端发布自己的成绩（未登录不发布） */
+      setReady: function (v) {
+        cloud.ready = !!v;
+        if (cloud.ready && mode === 'cloud') publishSelf();
+        return cloud.ready;
+      },
       takeClasses: function () { var out = farClasses.slice(); farClasses = []; return out; },
       publishClass: function (payload) {
         if (mode !== 'cloud') return false;
