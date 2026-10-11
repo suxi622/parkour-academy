@@ -18,7 +18,7 @@
      同一个主题名的所有设备共享同一份榜单；换主题名即可开一个独立榜单。 */
   var CLOUD = {
     base: 'https://ntfy.sh',
-    topic: 'pkacademy-4m4tnfwq6md3r-live',
+    topic: 'pkacademy-v2-4m4tnfwq6md3r',
     sinceStream: '3h',
     sincePoll: '8h',
     publishMinGap: 600,
@@ -72,7 +72,7 @@
         id: rand('dev'),
         name: (opts.me && opts.me.name) || '小跑者',
         emoji: (opts.me && opts.me.emoji) || '🐱',
-        klass: (opts.me && opts.me.klass) || '三年级 1 班'
+        klass: (opts.me && opts.me.klass) || ''
       };
       writeStore(IDENTITY_KEY, identity);
     }
@@ -141,7 +141,7 @@
         id: e.id,
         name: e.name,
         emoji: e.emoji,
-        klass: e.klass,
+        klass: e.klass || '未分班',
         isMe: e.id === account.participantId,
         isBot: !!e.isBot,
         demo: !!e.isBot,
@@ -209,7 +209,7 @@
         id: identity.id,
         name: identity.name,
         emoji: identity.emoji,
-        klass: identity.klass,
+        klass: identity.klass || '未分班',
         points: { today: pts.today || 0, week: pts.week || 0, total: pts.total || 0 },
         subjectPoints: me.subjectPoints || {},
         streak: me.streak || 0,
@@ -381,7 +381,7 @@
         id: p.id,
         name: p.name,
         emoji: p.emoji,
-        klass: p.klass,
+        klass: p.klass || '未分班',
         isMe: p.id === identity.id,
         demo: !!p.demo,
         online: p.demo ? true : (Date.now() - (p.at || 0) < 5 * 60 * 1000),
@@ -400,15 +400,7 @@
         list.push(mapCloud(cloud.participants[id], subjectKey));
       });
       if (!cloud.participants[identity.id]) list.push(mapCloud(cloudSelfSnapshot(), subjectKey));
-      // 人少时补几位「演示」同学，让榜单与实时动态看起来更生动（带「演示」标记）
-      if (list.filter(function (e) { return !e.demo; }).length < 3) {
-        local.peers.slice(0, 6).forEach(function (p) {
-          list.push(mapCloud({
-            id: p.id, name: p.name, emoji: p.emoji, klass: p.klass, points: p.points,
-            subjectPoints: p.subjectPoints, streak: p.streak, at: Date.now(), demo: true
-          }, subjectKey));
-        });
-      }
+      // 榜单只展示真实进入的用户，不再注入任何演示 / 测试账号
       return list;
     }
 
