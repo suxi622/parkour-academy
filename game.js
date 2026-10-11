@@ -1,6 +1,9 @@
 /*!
- * 汤姆猫跑酷学堂 · 跑酷闯关引擎
- * 三跑道伪 3D 跑酷 + 答题门 + BOSS 战
+ * 汤姆猫跑酷学堂 · 跑酷闯关引擎（精致版 v2）
+ *
+ * 玩法：三跑道跑酷 → 撞到建筑才会弹出题目 → 答对爆金币（题目越难金币越多）
+ *       躲开建筑（换道 / 跳跃）不会触发题目 → 冲过终点结算。
+ * 场景：每个学科一套独立的皮肤（天空 / 路面 / 护栏 / 远景 / 装饰）。
  */
 (function () {
   'use strict';
@@ -8,33 +11,95 @@
 
   var CFG = {
     FAR: 1500,
-    BASE_SPEED: 320,
-    MAX_SPEED: 900,
+    BASE_SPEED: 330,
+    MAX_SPEED: 880,
     MIN_SPEED: 190,
-    SPEED_UP: 55,
-    SPEED_DOWN: 90,
+    SPEED_UP: 58,
+    SPEED_DOWN: 95,
     LANES: [-1, 0, 1],
-    QUESTION_TRIGGER: 300,
-    COIN_VALUE: 10,
-    CORRECT_GOLD: 20,
-    CORRECT_SCORE: 100,
-    WRONG_SCORE: -20,
     MAX_LIVES: 3,
-    BOSS_HP: 3
+    CORRECT_SCORE: 120,
+    WRONG_SCORE: -30,
+    FINISH_PAD: 1300
   };
 
-  function lerp(a, b, t) { return a + (b - a) * t; }
+  var COIN_BY_DIFF = { basic: 10, consolidated: 20, final: 30 };
+  function coinBase(q) { return COIN_BY_DIFF[q && q.difficulty] || 12; }
+
+  /* ============================================================
+   * 每个学科一套场景皮肤
+   *   sky    天空渐变      road   路面渐变
+   *   line   车道线颜色     rail   护栏颜色
+   *   accent 主题色         wall   建筑主色 / wallDark 建筑暗部
+   *   scenery 远景类型       deco   飘浮装饰
+   * ============================================================ */
+  var THEMES = {
+    math: {
+      sky: ['#04091a', '#10224a', '#1b3f74'], road: ['#24395f', '#080f1f'],
+      line: 'rgba(124,200,255,', rail: ['#9fd8ff', 'rgba(43,140,238,0.22)'],
+      accent: '#5cc8ff', wall: '#2b4b86', wallDark: '#16294d',
+      fog: 'rgba(120,180,255,0.16)', scenery: 'city', deco: ['➗', '✖️', '📐', '🔢', '➕']
+    },
+    chinese: {
+      sky: ['#f7efdd', '#efdcbb', '#dcc39a'], road: ['#5b4a35', '#2a2014'],
+      line: 'rgba(255,236,190,', rail: ['#e8c896', 'rgba(150,110,60,0.2)'],
+      accent: '#c2410c', wall: '#b8442a', wallDark: '#7c2d12',
+      fog: 'rgba(255,240,210,0.35)', scenery: 'ink', deco: ['🖌️', '📜', '🎋', '🀄', '🍃']
+    },
+    english: {
+      sky: ['#0b1a3f', '#123a72', '#1b62ac'], road: ['#1f3760', '#0a1730'],
+      line: 'rgba(255,214,102,', rail: ['#ffe08a', 'rgba(200,150,40,0.22)'],
+      accent: '#fbbf24', wall: '#2f5fa8', wallDark: '#153059',
+      fog: 'rgba(255,225,150,0.18)', scenery: 'blocks', deco: ['🔤', '🅰️', '📚', '✏️', '💬']
+    },
+    physics: {
+      sky: ['#04030d', '#1a1038', '#2c1a5c'], road: ['#2a1d4e', '#08060f'],
+      line: 'rgba(196,132,252,', rail: ['#dcb6fe', 'rgba(140,80,220,0.22)'],
+      accent: '#c084fc', wall: '#4c2b8a', wallDark: '#291552',
+      fog: 'rgba(190,140,255,0.2)', scenery: 'space', deco: ['🪐', '⚛️', '🔭', '🧲', '✨']
+    },
+    chemistry: {
+      sky: ['#02130d', '#0a2c20', '#0f4433'], road: ['#123a2c', '#03130e'],
+      line: 'rgba(110,231,183,', rail: ['#7ef0c0', 'rgba(20,160,110,0.22)'],
+      accent: '#34d399', wall: '#166b4d', wallDark: '#083526',
+      fog: 'rgba(110,231,183,0.18)', scenery: 'lab', deco: ['⚗️', '🧪', '💧', '🔬', '🫧']
+    },
+    biology: {
+      sky: ['#03120a', '#0d3118', '#164c21'], road: ['#143a21', '#04140a'],
+      line: 'rgba(134,239,172,', rail: ['#a7f3c0', 'rgba(40,160,80,0.22)'],
+      accent: '#4ade80', wall: '#1f7a3c', wallDark: '#0c3d1e',
+      fog: 'rgba(134,239,172,0.18)', scenery: 'forest', deco: ['🌿', '🍃', '🐛', '🧬', '🌱']
+    },
+    politics: {
+      sky: ['#f7f1e6', '#ebdcc4', '#cdb894'], road: ['#5a5142', '#292318'],
+      line: 'rgba(255,242,206,', rail: ['#f0d6a4', 'rgba(160,120,60,0.2)'],
+      accent: '#b45309', wall: '#a8622a', wallDark: '#6b3d13',
+      fog: 'rgba(255,246,225,0.4)', scenery: 'dome', deco: ['⚖️', '📜', '🏛️', '📖', '🕊️']
+    },
+    history: {
+      sky: ['#120e08', '#2b2010', '#462f14'], road: ['#3c2c18', '#140d05'],
+      line: 'rgba(253,224,71,', rail: ['#fde68a', 'rgba(180,120,30,0.22)'],
+      accent: '#fbbf24', wall: '#8a5a24', wallDark: '#4a2e0f',
+      fog: 'rgba(255,220,140,0.16)', scenery: 'ancient', deco: ['🏮', '🏯', '📜', '🗿', '🧧']
+    },
+    geography: {
+      sky: ['#01101a', '#062b40', '#08506b'], road: ['#0d4155', '#02121a'],
+      line: 'rgba(103,232,249,', rail: ['#a5f3fc', 'rgba(14,116,144,0.22)'],
+      accent: '#22d3ee', wall: '#0e6b86', wallDark: '#053444',
+      fog: 'rgba(103,232,249,0.18)', scenery: 'globe', deco: ['🌏', '☁️', '🧭', '⛰️', '🌊']
+    }
+  };
+  function themeFor(key) { return THEMES[key] || THEMES.math; }
 
   function mount(container, opts) {
     opts = opts || {};
-    var questions = (opts.questions || []).slice();
-    var scene = opts.scene || ['#0f172a', '#1e3a5f'];
+    var questions = PK.shuffle((opts.questions || []).slice(), opts.seed || 7);
     var subjectName = opts.subjectName || '数学';
     var difficultyName = opts.difficultyName || '基础关卡';
-    var total = questions.length;
+    var theme = themeFor(opts.subjectKey || (questions[0] && questions[0].subject) || 'math');
 
     var state = {
-      phase: 'ready',            // ready | playing | question | paused | finished
+      phase: 'ready',            // ready | countdown | playing | question | paused | finished
       distance: 0,
       speed: CFG.BASE_SPEED,
       lives: CFG.MAX_LIVES,
@@ -47,6 +112,7 @@
       wrongIds: [],
       objects: [],
       particles: [],
+      floats: [],
       lane: 1,
       laneVisual: 1,
       jumpY: 0,
@@ -55,15 +121,19 @@
       invuln: 0,
       hurtFlash: 0,
       goodFlash: 0,
+      shake: 0,
       lastSpawnAt: 0,
-      spawnIndex: 0,
-      questionPool: PK.shuffle(questions, opts.seed || 7),
+      spawned: 0,
+      resolved: 0,
+      dodged: 0,
+      planned: questions.length,
+      questionPool: questions.slice(),
       activeQuestion: null,
       activeObject: null,
-      boss: null,
-      bossHp: CFG.BOSS_HP,
+      finish: null,
       elapsed: 0,
-      result: null
+      result: null,
+      lastCoin: 0
     };
 
     /* ---------------- DOM ---------------- */
@@ -77,17 +147,17 @@
         '<div class="game-hud">' +
           '<div class="hud-row">' +
             '<div class="hud-chip"><span class="hearts" id="gLives">❤️❤️❤️</span></div>' +
-            '<div class="hud-chip" id="gSubject">' + subjectName + ' · ' + difficultyName + '</div>' +
+            '<div class="hud-chip" id="gSubject">' + esc(subjectName) + ' · ' + esc(difficultyName) + '</div>' +
             '<div class="hud-chip">🏆 <span id="gScore">0</span></div>' +
-            '<div class="hud-chip">🪙 <span id="gGold">0</span></div>' +
+            '<div class="hud-chip gold">🪙 <span id="gGold">0</span></div>' +
           '</div>' +
+          '<div class="hud-bar"><i id="gBar"></i><span id="gBarText">0 / ' + state.planned + ' 座建筑</span></div>' +
           '<div class="hud-row" style="align-items:flex-end">' +
             '<div class="hud-chip">速度 <span id="gSpeed">1.0</span>x</div>' +
-            '<div class="hud-chip">题目 <span id="gProgress">0/0</span></div>' +
-            '<div class="hud-chip" id="gBoss" style="display:none">BOSS ❤️❤️❤️</div>' +
+            '<div class="hud-chip">连击 <span id="gCombo">0</span></div>' +
           '</div>' +
         '</div>' +
-        '<div class="combo-badge" id="gCombo"></div>' +
+        '<div class="combo-badge" id="gComboBadge"></div>' +
         '<div id="gOverlay"></div>' +
       '</div>';
 
@@ -95,13 +165,14 @@
     var canvas = container.querySelector('canvas');
     var ctx = canvas.getContext('2d');
     var overlay = container.querySelector('#gOverlay');
-    var comboEl = container.querySelector('#gCombo');
+    var comboEl = container.querySelector('#gComboBadge');
     var hudLives = container.querySelector('#gLives');
     var hudScore = container.querySelector('#gScore');
     var hudGold = container.querySelector('#gGold');
     var hudSpeed = container.querySelector('#gSpeed');
-    var hudProgress = container.querySelector('#gProgress');
-    var hudBoss = container.querySelector('#gBoss');
+    var hudCombo = container.querySelector('#gCombo');
+    var hudBar = container.querySelector('#gBar');
+    var hudBarText = container.querySelector('#gBarText');
     var pauseBtn = container.querySelector('#gPause');
     var fullBtn = container.querySelector('#gFull');
 
@@ -119,188 +190,135 @@
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
       W = cssW; H = cssH;
       stars = [];
-      for (var i = 0; i < 70; i++) {
-        stars.push({ x: Math.random() * W, y: Math.random() * H * 0.42, r: Math.random() * 1.6 + 0.4, a: Math.random(), s: 0.5 + Math.random() });
+      for (var i = 0; i < 64; i++) {
+        stars.push({ x: Math.random() * W, y: Math.random() * H * 0.4, r: Math.random() * 1.5 + 0.35, s: 0.5 + Math.random() });
       }
     }
 
-    /* ---------------- 投影 ---------------- */
+    /* ---------------- 投影：lane 0/1/2 → -1/0/1 ---------------- */
     function project(z, lane) {
+      var laneOff = (lane === undefined || lane === null ? 1 : lane) - 1;
       var t = Math.max(0, Math.min(1, z / CFG.FAR));
       var e = t * t * 0.6 + t * 0.4;
-      var y = lerp(H * 0.9, H * 0.33, e);
+      var y = lerp(H * 0.9, H * 0.35, e);
       var scale = lerp(1, 0.16, e);
-      var x = W / 2 + lane * (W * 0.34) * scale;
+      var x = W / 2 + laneOff * (W * 0.34) * scale;
       return { x: x, y: y, scale: scale, t: t };
     }
+    function lerp(a, b, t) { return a + (b - a) * t; }
 
-    /** 五角星路径（用于金币内的星形） */
-    function traceStar(cx, cy, outer, inner, spikes) {
-      var rot = -Math.PI / 2, step = Math.PI / spikes;
+    function roundRect(x, y, w, h, r) {
+      r = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
       ctx.beginPath();
-      ctx.moveTo(cx, cy - outer);
-      for (var i = 0; i < spikes; i++) {
-        ctx.lineTo(cx + Math.cos(rot) * outer, cy + Math.sin(rot) * outer); rot += step;
-        ctx.lineTo(cx + Math.cos(rot) * inner, cy + Math.sin(rot) * inner); rot += step;
-      }
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
       ctx.closePath();
     }
 
-    /** 远景山脊 / 城市剪影（视差） */
-    function drawHills(baseY, parallax, color, hMin, step) {
-      var offset = (state.distance * parallax) % step;
-      ctx.save();
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(-step, baseY + 6);
-      var x = -step * 2 - offset;
-      var i = 0;
-      while (x < W + step) {
-        var h = hMin + ((i * 53) % 7) / 7 * hMin * 1.5;
-        ctx.lineTo(x, baseY + 4);
-        ctx.lineTo(x + step * 0.5, baseY - h);
-        ctx.lineTo(x + step, baseY + 4);
-        x += step; i++;
-      }
-      ctx.lineTo(W + step, baseY + 10);
-      ctx.lineTo(-step, baseY + 10);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
-
-    /** 天空、星空、地平线光晕、远景剪影 */
-    function drawSky() {
-      var g = ctx.createLinearGradient(0, 0, 0, H);
-      g.addColorStop(0, scene[0]);
-      g.addColorStop(1, scene[1]);
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H);
-
-      var tw = state.elapsed;
-      stars.forEach(function (s) {
-        ctx.globalAlpha = 0.28 + Math.abs(Math.sin(tw * s.s + s.x)) * 0.6;
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(((s.x - state.distance * 0.02 * s.s) % W + W) % W, s.y, s.r, 0, Math.PI * 2);
-        ctx.fill();
+    /* ============================================================
+     * 生成
+     * ============================================================ */
+    function pickFreeLane() {
+      var busy = [];
+      state.objects.forEach(function (o) {
+        if (o.kind === 'building' && !o.destroyed && o.z > CFG.FAR - 320) busy.push(o.lane);
       });
-      ctx.globalAlpha = 1;
-
-      var glow = ctx.createRadialGradient(W / 2, H * 0.33, 0, W / 2, H * 0.33, W * 0.62);
-      glow.addColorStop(0, 'rgba(255,255,255,0.2)');
-      glow.addColorStop(0.5, 'rgba(255,255,255,0.05)');
-      glow.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = glow;
-      ctx.fillRect(0, 0, W, H);
-
-      drawHills(H * 0.335, 0.045, 'rgba(255,255,255,0.07)', 74, 250);
-      drawHills(H * 0.335, 0.09, 'rgba(0,0,0,0.3)', 54, 190);
+      var free = [0, 1, 2].filter(function (l) { return busy.indexOf(l) === -1; });
+      var pool = free.length ? free : [0, 1, 2];
+      return pool[Math.floor(Math.random() * pool.length)];
     }
 
-    /** 高速时的速度线 */
-    function drawSpeedLines() {
-      var t = (state.speed - CFG.BASE_SPEED) / (CFG.MAX_SPEED - CFG.BASE_SPEED);
-      if (t <= 0.12 || state.phase !== 'playing') return;
-      var n = Math.round(t * 16);
-      var roll = Math.floor(state.distance * 0.5);
-      ctx.save();
-      ctx.globalAlpha = Math.min(0.42, t * 0.45);
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth = 1.6;
-      for (var i = 0; i < n; i++) {
-        var seed = (i * 97 + roll) % 1000;
-        var y = ((seed * 37) % (H * 0.46)) + H * 0.24;
-        var side = (i % 2 === 0) ? -1 : 1;
-        var x0 = W / 2 + side * (W * 0.28 + ((seed * 13) % 70));
-        var len = 40 + ((seed * 7) % 100);
-        ctx.beginPath();
-        ctx.moveTo(x0, y);
-        ctx.lineTo(x0 + side * len, y + 3);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
-    /* ---------------- 生成 ---------------- */
-    function spawnQuestion() {
-      if (!state.questionPool.length) return false;
+    function spawnBuilding() {
+      if (state.spawned >= state.planned) return;
       var q = state.questionPool.shift();
-      var lane = CFG.LANES[Math.floor(Math.random() * 3)];
-      state.objects.push({ kind: 'question', z: CFG.FAR, lane: lane, question: q, destroyed: false, passed: false, bob: Math.random() * 6 });
-      return true;
-    }
-
-    function spawnBlock() {
-      var lane = CFG.LANES[Math.floor(Math.random() * 3)];
-      state.objects.push({ kind: 'block', z: CFG.FAR, lane: lane, destroyed: false, passed: false, color: '#' + (['ef524d', '713cdd', '2b8cee'])[Math.floor(Math.random() * 3)] });
-    }
-
-    function spawnCoin() {
-      var lane = CFG.LANES[Math.floor(Math.random() * 3)];
-      var count = 1 + Math.floor(Math.random() * 3);
-      for (var i = 0; i < count; i++) {
-        state.objects.push({ kind: 'coin', z: CFG.FAR + i * 90, lane: lane, destroyed: false, passed: false, spin: Math.random() * 6 });
-      }
-    }
-
-    function spawnBoss() {
-      state.boss = { kind: 'boss', z: CFG.FAR, lane: 0, hp: CFG.BOSS_HP, destroyed: false, hitFlash: 0 };
-      state.objects.push(state.boss);
-      state.bossHp = CFG.BOSS_HP;
-      hudBoss.style.display = '';
-      updateBossHud();
-    }
-
-    function updateBossHud() {
-      var hearts = '';
-      for (var i = 0; i < CFG.BOSS_HP; i++) hearts += (i < state.bossHp ? '❤️' : '🖤');
-      hudBoss.innerHTML = 'BOSS ' + hearts;
+      if (!q) return;
+      state.objects.push({
+        kind: 'building',
+        z: CFG.FAR,
+        lane: pickFreeLane(),
+        q: q,
+        boss: state.spawned === state.planned - 1,
+        seed: Math.random() * 6,
+        destroyed: false,
+        passed: false,
+        resolved: false,
+        flash: 0
+      });
+      state.spawned++;
     }
 
     function maybeSpawn() {
-      var gap = Math.max(280, 620 - state.speed * 0.28);
+      if (state.spawned >= state.planned) return;
+      var gap = 560 + Math.random() * 260 - Math.min(150, state.speed * 0.16);
       if (state.distance - state.lastSpawnAt < gap) return;
       state.lastSpawnAt = state.distance;
-      state.spawnIndex++;
-
-      // 最后 3 道题 → BOSS 战
-      var remaining = state.questionPool.length;
-      var needBoss = total > 3 && state.answered >= total - 3 && !state.boss && state.lives > 0;
-      if (needBoss) { spawnBoss(); spawnQuestion(); return; }
-
-      var roll = Math.random();
-      if (state.questionPool.length && (roll < 0.5 || state.spawnIndex % 3 === 0)) spawnQuestion();
-      else if (roll < 0.74) spawnBlock();
-      else spawnCoin();
+      spawnBuilding();
     }
 
+    function checkFinish() {
+      if (state.finish) return;
+      if (state.resolved >= state.planned && state.spawned >= state.planned) {
+        state.finish = { z: CFG.FAR + CFG.FINISH_PAD };
+      }
+    }
+
+    /* ---------------- 粒子 / 飘字 ---------------- */
     function burst(x, y, color, n, spread) {
       for (var i = 0; i < n; i++) {
         var ang = Math.random() * Math.PI * 2;
         var sp = (spread || 150) * (0.35 + Math.random());
         state.particles.push({
-          x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 60,
-          life: 0.7 + Math.random() * 0.4, age: 0, color: color, size: 2 + Math.random() * 4
+          x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 70,
+          life: 0.7 + Math.random() * 0.5, age: 0, color: color, size: 2 + Math.random() * 4
         });
       }
     }
 
-    /* ---------------- 更新 ---------------- */
+    /** 答对：从建筑里爆出金币 */
+    function coinBurst(x, y, amount) {
+      var n = Math.max(8, Math.min(30, Math.round(amount * 0.8)));
+      for (var i = 0; i < n; i++) {
+        var ang = -Math.PI * (0.15 + Math.random() * 0.7);
+        var sp = 180 + Math.random() * 240;
+        state.particles.push({
+          x: x, y: y, vx: Math.cos(ang) * sp * (Math.random() < 0.5 ? -1 : 1),
+          vy: Math.sin(ang) * sp - 120, life: 0.9 + Math.random() * 0.6, age: 0,
+          color: '#ffd75e', size: 5 + Math.random() * 4, coin: true, spin: Math.random() * 6
+        });
+      }
+      state.floats.push({ x: x, y: y - 10, text: '+' + amount + ' 🪙', color: '#ffe08a', age: 0, life: 1.3, size: 26 });
+      state.floats.push({ x: x, y: y + 18, text: '答对啦！', color: '#7ef0c0', age: 0, life: 1.1, size: 18 });
+    }
+
+    function dust(x, y) {
+      state.particles.push({
+        x: x, y: y, vx: (Math.random() - 0.5) * 60, vy: -Math.random() * 60,
+        life: 0.45, age: 0, color: 'rgba(255,255,255,0.5)', size: 2 + Math.random() * 3
+      });
+    }
+
+    /* ============================================================
+     * 更新
+     * ============================================================ */
     function update(dt) {
       state.elapsed += dt;
       if (state.invuln > 0) state.invuln -= dt;
       if (state.hurtFlash > 0) state.hurtFlash -= dt;
       if (state.goodFlash > 0) state.goodFlash -= dt;
+      if (state.shake > 0) state.shake -= dt;
+
+      // 粒子 / 飘字即便在答题时也要继续演算，金币才会自然落下
+      stepParticles(dt);
+
       if (state.phase !== 'playing') return;
 
       state.distance += state.speed * dt;
       if (state.speed < CFG.MAX_SPEED) state.speed = Math.min(CFG.MAX_SPEED, state.speed + 6 * dt);
-
-      // 换跑道平滑
       state.laneVisual += (state.lane - state.laneVisual) * Math.min(1, dt * 12);
 
-      // 跳跃
       if (state.jumping) {
         state.vy += 2100 * dt;
         state.jumpY += state.vy * dt;
@@ -309,49 +327,51 @@
 
       maybeSpawn();
 
-      for (var i = state.objects.length - 1; i >= 0; i--) {
-        var o = state.objects[i];
+      var i, o;
+      for (i = state.objects.length - 1; i >= 0; i--) {
+        o = state.objects[i];
         o.z -= state.speed * dt;
+        if (o.flash > 0) o.flash -= dt;
 
-        if (o.kind === 'question' && !o.destroyed && !o.passed && o.z <= CFG.QUESTION_TRIGGER) {
-          o.z = CFG.QUESTION_TRIGGER;
-          askQuestion(o);
-          return;
-        }
-
-        if (o.z <= 6 && o.z > -90 && !o.destroyed && !o.passed) {
-          if (o.kind === 'coin') {
-            if (o.lane === state.lane && !state.jumping) {
-              o.destroyed = true;
-              state.gold += CFG.COIN_VALUE;
-              state.score += CFG.COIN_VALUE;
-              var p = project(o.z, o.lane);
-              burst(p.x, p.y, '#ffd75e', 10, 120);
-              syncHud();
-            } else if (o.z < -60) { o.passed = true; }
-          } else if (o.lane === state.lane && !state.jumping) {
-            if (o.kind === 'block') {
-              o.passed = true;
-              hurt('撞到了障碍物');
-            } else if (o.kind === 'boss') {
-              o.passed = true;
-              hurt('被 BOSS 挡住了');
-            }
-          } else if (o.z < -60) {
-            o.passed = true;
+        // 撞到建筑 → 弹题
+        if (o.kind === 'building' && !o.destroyed && !o.passed && !o.resolved && o.z <= 12 && o.z > -46) {
+          if (o.lane === state.lane && !state.jumping) {
+            askQuestion(o);
+            return;
           }
         }
-
-        if (o.z < -160) state.objects.splice(i, 1);
+        // 躲过去了（换道或跳过去）
+        if (o.kind === 'building' && !o.destroyed && !o.passed && !o.resolved && o.z <= -46) {
+          o.passed = true;
+          state.resolved++;
+          state.dodged++;
+          checkFinish();
+        }
+        if (o.z < -220) state.objects.splice(i, 1);
       }
 
-      for (var j = state.particles.length - 1; j >= 0; j--) {
-        var pt = state.particles[j];
-        pt.age += dt;
-        pt.x += pt.vx * dt;
-        pt.y += pt.vy * dt;
-        pt.vy += 520 * dt;
-        if (pt.age >= pt.life) state.particles.splice(j, 1);
+      if (state.finish) {
+        state.finish.z -= state.speed * dt;
+        if (state.finish.z <= 6) { state.finish.z = 6; end(true); return; }
+      }
+    }
+
+    function stepParticles(dt) {
+      var j, p;
+      for (j = state.particles.length - 1; j >= 0; j--) {
+        p = state.particles[j];
+        p.age += dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += (p.coin ? 620 : 520) * dt;
+        if (p.coin) p.spin += dt * 10;
+        if (p.age >= p.life) state.particles.splice(j, 1);
+      }
+      for (j = state.floats.length - 1; j >= 0; j--) {
+        p = state.floats[j];
+        p.age += dt;
+        p.y -= 26 * dt;
+        if (p.age >= p.life) state.floats.splice(j, 1);
       }
     }
 
@@ -361,29 +381,41 @@
       state.combo = 0;
       state.invuln = 1.2;
       state.hurtFlash = 0.45;
+      state.shake = 0.3;
       state.speed = Math.max(CFG.MIN_SPEED, state.speed - CFG.SPEED_DOWN);
       syncHud();
       if (opts.onEvent) opts.onEvent({ type: 'hurt', reason: reason, lives: state.lives });
       if (state.lives <= 0) end(false);
     }
 
-    /* ---------------- 答题 ---------------- */
-    function askQuestion(obj) {
+    /* ============================================================
+     * 答题（撞建筑才触发）
+     * ============================================================ */
+    function askQuestion(o) {
       state.phase = 'question';
-      state.activeQuestion = obj.question;
-      state.activeObject = obj;
-      renderQuestion(obj.question);
+      state.activeQuestion = o.q;
+      state.activeObject = o;
+      o.flash = 0.5;
+      state.floats.push({ x: project(o.z, o.lane).x, y: project(o.z, o.lane).y - 40, text: '📚 遇到建筑！', color: '#fff', age: 0, life: 0.9, size: 18 });
+      renderQuestion(o.q, o);
     }
 
     function questionTypeName(type) {
       return type === 'judge' ? '判断题' : type === 'fill' ? '填空题' : '单选题';
     }
 
-    function renderQuestion(q) {
+    function rewardFor(q, o) {
+      var base = coinBase(q);
+      var comboBonus = Math.round(base * Math.min(state.combo, 10) * 0.05);
+      return (base + comboBonus) * (o && o.boss ? 3 : 1);
+    }
+
+    function renderQuestion(q, o) {
+      var base = coinBase(q);
       var html = [];
-      html.push('<div class="overlay" id="qOverlay"><div class="overlay-card">');
+      html.push('<div class="overlay" id="qOverlay"><div class="overlay-card q-card">');
       html.push('<div class="row between"><span class="q-type-chip">' + questionTypeName(q.type) + '</span>');
-      html.push('<span class="badge">第 ' + (state.answered + 1) + ' / ' + total + ' 题</span></div>');
+      html.push('<span class="q-reward">答对可得 <b>+' + (o && o.boss ? base * 3 : base) + '</b> 🪙</span></div>');
       html.push('<div class="q-content">' + esc(q.content) + '</div>');
       html.push('<div id="qBody">');
       if (q.type === 'fill') {
@@ -398,7 +430,7 @@
       html.push('<button class="btn btn-primary grow" id="qSubmit">确认答案</button>');
       html.push('<button class="btn btn-ghost" id="qSkip">跳过</button>');
       html.push('</div>');
-      html.push('<div class="center muted" style="font-size:12px;margin-top:10px">答对：清除障碍 · 速度 +1 · 金币 +20 &nbsp;|&nbsp; 答错：扣 1 点生命</div>');
+      html.push('<div class="center muted" style="font-size:12px;margin-top:10px">答对：建筑爆金币（越难越多）· 加速前进 &nbsp;|&nbsp; 答错：扣 1 点生命 · 躲开建筑则不会出题</div>');
       html.push('</div></div>');
       overlay.innerHTML = html.join('');
 
@@ -432,7 +464,6 @@
         var res = PK.grade(q, payload);
         state.answered++;
 
-        // 正确/错误样式
         Array.prototype.forEach.call(body.querySelectorAll('.opt'), function (b, idx) {
           b.disabled = true;
           if (idx === res.expectedIndex) b.classList.add('correct');
@@ -443,16 +474,17 @@
           fill.style.borderColor = res.correct ? '#28bd66' : '#ef524d';
         }
 
+        var gain = res.correct ? rewardFor(q, o) : 0;
         feed.innerHTML =
           '<div class="verdict ' + (res.correct ? 'ok' : 'no') + '" style="margin-top:14px">' +
-            (res.correct ? '✓ 回答正确！' : '✕ 回答错误') +
+            (res.correct ? '✓ 回答正确！建筑爆出 ' + gain + ' 金币' : '✕ 回答错误') +
           '</div>' +
           '<div style="font-size:13px;color:var(--muted);margin-top:6px">正确答案：<b style="color:#16202e">' + esc(res.expectedText) + '</b>' +
             (res.correct ? '' : '　你的答案：' + esc(res.givenText || '（空）')) +
           '</div>' +
           (q.analysis ? '<div class="analysis"><b>解析</b>　' + esc(q.analysis) + '</div>' : '');
 
-        submit.textContent = '继续闯关';
+        submit.textContent = '继续跑酷';
         submit.className = 'btn btn-accent grow';
         submit.onclick = finishQuestion;
         var skipBtn = overlay.querySelector('#qSkip');
@@ -462,36 +494,29 @@
           state.correct++;
           state.combo++;
           state.bestCombo = Math.max(state.bestCombo, state.combo);
-          state.gold += CFG.CORRECT_GOLD;
-          state.score += CFG.CORRECT_SCORE + state.combo * 5;
+          state.gold += gain;
+          state.lastCoin = gain;
+          state.score += CFG.CORRECT_SCORE + state.combo * 10 + Math.round(gain * 2);
           state.speed = Math.min(CFG.MAX_SPEED, state.speed + CFG.SPEED_UP);
           state.goodFlash = 0.35;
-          var obj = state.activeObject;
-          if (obj) {
-            obj.destroyed = true;
-            var p = project(obj.z, obj.lane);
-            burst(p.x, p.y, '#4ade80', 26, 260);
-          }
-          if (state.boss && state.bossHp > 0) {
-            state.bossHp -= 1;
-            state.boss.hitFlash = 0.4;
-            updateBossHud();
-            if (state.bossHp <= 0) {
-              var bp = project(state.boss.z, 0);
-              burst(bp.x, bp.y, '#ffd75e', 46, 320);
-            }
+          if (o) {
+            o.destroyed = true;
+            var p = project(o.z, o.lane);
+            coinBurst(p.x, p.y - 30, gain);
+            burst(p.x, p.y - 20, theme.accent, 16, 220);
+            if (!o.resolved) { o.resolved = true; state.resolved++; checkFinish(); }
           }
           showCombo();
         } else {
           state.wrongIds.push(q.id);
-          if (state.boss && state.bossHp < CFG.BOSS_HP) { state.bossHp += 1; updateBossHud(); }
           state.score = Math.max(0, state.score + CFG.WRONG_SCORE);
+          if (o && !o.resolved) { o.resolved = true; state.resolved++; checkFinish(); }
           hurt('答错题目');
         }
         syncHud();
         if (opts.onAnswer) opts.onAnswer(res.correct, q, payload, res);
         if (state.phase === 'finished') return;
-        setTimeout(function () { if (settled && state.phase === 'question') finishQuestion(); }, 2600);
+        setTimeout(function () { if (settled && state.phase === 'question') finishQuestion(); }, 2900);
       }
 
       function finishQuestion() {
@@ -499,7 +524,7 @@
         state.activeQuestion = null;
         state.activeObject = null;
         if (state.lives <= 0) return;
-        if (state.answered >= total && total > 0) { end(true); return; }
+        if (state.finish && state.finish.z <= 60) { end(true); return; }
         state.phase = 'playing';
       }
 
@@ -518,12 +543,25 @@
         state.answered++;
         state.combo = 0;
         state.wrongIds.push(q.id);
+        if (o && !o.resolved) { o.resolved = true; state.resolved++; checkFinish(); }
         hurt('跳过了题目');
         syncHud();
         if (opts.onAnswer) opts.onAnswer(false, q, '', { correct: false, expectedText: q.answer, givenText: '' });
         setTimeout(finishQuestion, 60);
       };
+
+      // 键盘：1-4 选项，回车确认
+      keyAnswer = function (e) {
+        if (settled) return;
+        if (q.type === 'fill' && e.key === 'Enter') { settle(); return; }
+        var n = parseInt(e.key, 10);
+        if (n >= 1 && n <= (q.options || []).length) {
+          var btn2 = body.querySelector('.opt[data-opt="' + (n - 1) + '"]');
+          if (btn2) { selected = n - 1; Array.prototype.forEach.call(body.querySelectorAll('.opt'), function (b) { b.classList.remove('selected'); }); btn2.classList.add('selected'); }
+        }
+      };
     }
+    var keyAnswer = null;
 
     function showCombo() {
       if (state.combo < 2) return;
@@ -533,45 +571,335 @@
       comboEl.classList.add('show');
     }
 
-    /* ---------------- 绘制 ---------------- */
+    /* ============================================================
+     * 绘制
+     * ============================================================ */
     function draw() {
+      ctx.save();
+      if (state.shake > 0) {
+        ctx.translate((Math.random() - 0.5) * state.shake * 22, (Math.random() - 0.5) * state.shake * 22);
+      }
       drawSky();
+      drawScenery();
       drawSpeedLines();
-
-      // 跑道
       drawRoad();
 
-      // 物体：远的先画
+      if (state.finish) drawFinish();
+
       var objs = state.objects.slice().sort(function (a, b) { return b.z - a.z; });
       objs.forEach(drawObject);
 
-      // 玩家
       drawPlayer();
+      drawParticles();
+      drawFloats();
 
-      // 粒子
-      state.particles.forEach(function (p) {
-        var a = 1 - p.age / p.life;
-        ctx.globalAlpha = Math.max(0, a);
-        ctx.fillStyle = p.color;
+      if (state.hurtFlash > 0) {
+        ctx.fillStyle = 'rgba(239,82,77,' + (state.hurtFlash * 0.6) + ')';
+        ctx.fillRect(0, 0, W, H);
+      }
+      if (state.goodFlash > 0) {
+        ctx.fillStyle = 'rgba(74,222,128,' + (state.goodFlash * 0.32) + ')';
+        ctx.fillRect(0, 0, W, H);
+      }
+      ctx.restore();
+    }
+
+    function drawSky() {
+      var g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, theme.sky[0]);
+      g.addColorStop(0.55, theme.sky[1]);
+      g.addColorStop(1, theme.sky[2]);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+
+      // 星空（亮色主题下弱一些）
+      var light = isLightSky();
+      stars.forEach(function (s) {
+        ctx.globalAlpha = (light ? 0.16 : 0.3) + Math.abs(Math.sin(state.elapsed * s.s + s.x)) * (light ? 0.16 : 0.55);
+        ctx.fillStyle = light ? 'rgba(120,90,50,1)' : '#ffffff';
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * (0.4 + a), 0, Math.PI * 2);
+        ctx.arc(((s.x - state.distance * 0.02 * s.s) % W + W) % W, s.y, s.r, 0, Math.PI * 2);
         ctx.fill();
       });
       ctx.globalAlpha = 1;
 
-      if (state.hurtFlash > 0) {
-        ctx.fillStyle = 'rgba(239,82,77,' + (state.hurtFlash * 0.7) + ')';
-        ctx.fillRect(0, 0, W, H);
+      var glow = ctx.createRadialGradient(W / 2, H * 0.34, 0, W / 2, H * 0.34, W * 0.66);
+      glow.addColorStop(0, theme.fog);
+      glow.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    function isLightSky() {
+      var hex = theme.sky[0];
+      var r = parseInt(hex.slice(1, 3), 16), g2 = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+      return (r * 299 + g2 * 587 + b * 114) / 1000 > 150;
+    }
+
+    /* ---------------- 每个学科不同的远景 ---------------- */
+    function drawScenery() {
+      var d = state.distance;
+      switch (theme.scenery) {
+        case 'city': drawCity(d); break;
+        case 'ink': drawInk(d); break;
+        case 'blocks': drawBlocks(d); break;
+        case 'space': drawSpace(d); break;
+        case 'lab': drawLab(d); break;
+        case 'forest': drawForest(d); break;
+        case 'dome': drawDome(d); break;
+        case 'ancient': drawAncient(d); break;
+        case 'globe': drawGlobe(d); break;
       }
-      if (state.goodFlash > 0) {
-        ctx.fillStyle = 'rgba(74,222,128,' + (state.goodFlash * 0.35) + ')';
-        ctx.fillRect(0, 0, W, H);
+      drawDeco(d);
+    }
+
+    function drawCity(d) {
+      var baseY = H * 0.37;
+      for (var layer = 0; layer < 2; layer++) {
+        var step = 130 + layer * 70, off = (d * (0.05 + layer * 0.05)) % step;
+        for (var x = -step - off; x < W + step; x += step) {
+          var hh = 70 + layer * 46 + (Math.abs(Math.round(x / step)) % 4) * 22;
+          ctx.fillStyle = layer === 0 ? 'rgba(120,180,255,0.10)' : 'rgba(6,12,26,0.34)';
+          ctx.fillRect(x, baseY - hh, step * 0.66, hh);
+          ctx.fillStyle = 'rgba(255,214,120,' + (layer === 0 ? 0.14 : 0.24) + ')';
+          for (var wy = baseY - hh + 12; wy < baseY - 10; wy += 18) {
+            for (var wx = x + 8; wx < x + step * 0.66 - 10; wx += 15) ctx.fillRect(wx, wy, 5, 8);
+          }
+        }
       }
+    }
+
+    function drawInk(d) {
+      var baseY = H * 0.4;
+      ctx.fillStyle = 'rgba(120,96,64,0.16)';
+      ctx.beginPath();
+      ctx.moveTo(-120, baseY + 30);
+      for (var x = -120; x < W + 200; x += 190) {
+        ctx.lineTo(x + 95, baseY - 62 - (Math.abs(Math.round(x / 190)) % 3) * 20);
+        ctx.lineTo(x + 190, baseY + 30);
+      }
+      ctx.lineTo(W + 200, baseY + 90); ctx.lineTo(-120, baseY + 90); ctx.closePath(); ctx.fill();
+
+      var off = (d * 0.08) % 150;
+      ctx.strokeStyle = 'rgba(70,110,60,0.26)';
+      ctx.lineWidth = 7;
+      for (var bx = -150 - off; bx < W + 150; bx += 150) {
+        ctx.beginPath(); ctx.moveTo(bx, baseY + 40); ctx.lineTo(bx + 9, H * 0.05); ctx.stroke();
+      }
+    }
+
+    function drawBlocks(d) {
+      var letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+      for (var i = 0; i < 7; i++) {
+        var seed = i * 137;
+        var x = ((seed * 13) % W + W - (d * 0.05 * (0.6 + i * 0.08)) % (W + 260) + (W + 260)) % (W + 260) - 130;
+        var y = H * 0.13 + ((seed * 7) % Math.round(H * 0.22));
+        var r = 16 + (seed % 4) * 5;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.sin(state.elapsed * 0.8 + i) * 0.07);
+        ctx.fillStyle = 'rgba(255,255,255,0.13)';
+        roundRect(-r, -r, r * 2, r * 2, r * 0.42); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.font = '900 ' + (r * 1.05) + 'px system-ui, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(letters[i % letters.length], 0, 1);
+        ctx.restore();
+      }
+    }
+
+    function drawSpace(d) {
+      var baseY = H * 0.36;
+      // 行星
+      ctx.save();
+      var px = W * 0.78, py = baseY - 40, pr = Math.min(W, H) * 0.09;
+      var pg = ctx.createRadialGradient(px - pr * 0.3, py - pr * 0.3, pr * 0.1, px, py, pr);
+      pg.addColorStop(0, 'rgba(216,180,254,0.9)');
+      pg.addColorStop(1, 'rgba(88,28,135,0.75)');
+      ctx.fillStyle = pg;
+      ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(216,180,254,0.5)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(px, py, pr * 1.7, pr * 0.42, -0.35, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+      // 轨道弧线
+      ctx.strokeStyle = 'rgba(196,132,252,0.2)';
+      ctx.lineWidth = 2;
+      for (var i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.ellipse(W * 0.28, baseY - 20, 120 + i * 70, 26 + i * 14, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    function drawLab(d) {
+      var baseY = H * 0.4;
+      var off = (d * 0.07) % 170;
+      ctx.strokeStyle = 'rgba(110,231,183,0.28)';
+      ctx.lineWidth = 3;
+      for (var x = -170 - off; x < W + 170; x += 170) {
+        // 试管
+        ctx.beginPath();
+        ctx.moveTo(x, baseY - 90);
+        ctx.lineTo(x, baseY - 20);
+        ctx.quadraticCurveTo(x, baseY, x + 16, baseY);
+        ctx.quadraticCurveTo(x + 32, baseY, x + 32, baseY - 20);
+        ctx.lineTo(x + 32, baseY - 90);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(110,231,183,0.18)';
+        ctx.fillRect(x + 2, baseY - 48, 28, 46);
+      }
+      // 气泡
+      for (var i = 0; i < 14; i++) {
+        var seed = i * 71;
+        var bxp = (seed * 29) % W;
+        var byp = baseY - ((state.elapsed * 26 + seed * 7) % 260);
+        ctx.globalAlpha = 0.24;
+        ctx.fillStyle = '#a7f3d0';
+        ctx.beginPath(); ctx.arc(bxp, byp, 2 + (seed % 4), 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawForest(d) {
+      var baseY = H * 0.4;
+      var off = (d * 0.07) % 160;
+      for (var x = -160 - off; x < W + 160; x += 160) {
+        ctx.fillStyle = 'rgba(20,70,40,0.5)';
+        ctx.beginPath();
+        ctx.moveTo(x, baseY + 40);
+        ctx.lineTo(x + 42, baseY - 96);
+        ctx.lineTo(x + 84, baseY + 40);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(12,50,28,0.55)';
+        ctx.fillRect(x + 36, baseY + 20, 12, 34);
+      }
+      for (var i = 0; i < 16; i++) {
+        var seed = i * 53;
+        var fx = ((seed * 37) % W) + Math.sin(state.elapsed * 0.7 + i) * 16;
+        var fy = H * 0.16 + ((seed * 11) % Math.round(H * 0.22)) + Math.cos(state.elapsed * 0.9 + i) * 8;
+        ctx.globalAlpha = 0.4 + Math.abs(Math.sin(state.elapsed * 1.6 + i)) * 0.5;
+        ctx.fillStyle = '#bbf7d0';
+        ctx.beginPath(); ctx.arc(fx, fy, 2, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawDome(d) {
+      var baseY = H * 0.4;
+      var off = (d * 0.05) % 240;
+      for (var x = -240 - off; x < W + 240; x += 240) {
+        ctx.fillStyle = 'rgba(120,80,30,0.22)';
+        // 山花
+        ctx.beginPath();
+        ctx.moveTo(x, baseY - 92);
+        ctx.lineTo(x + 110, baseY - 132);
+        ctx.lineTo(x + 220, baseY - 92);
+        ctx.closePath(); ctx.fill();
+        // 立柱
+        for (var c = 0; c < 6; c++) ctx.fillRect(x + 12 + c * 35, baseY - 92, 18, 92);
+        ctx.fillRect(x, baseY - 6, 220, 14);
+      }
+    }
+
+    function drawAncient(d) {
+      var baseY = H * 0.4;
+      var off = (d * 0.05) % 260;
+      for (var x = -260 - off; x < W + 260; x += 260) {
+        ctx.fillStyle = 'rgba(30,20,8,0.5)';
+        for (var t = 0; t < 3; t++) {
+          var tw = 140 - t * 34, th = 34;
+          ctx.fillRect(x + (140 - tw) / 2, baseY - 60 - t * 44, tw, th);
+          ctx.beginPath();
+          ctx.moveTo(x + (140 - tw) / 2 - 14, baseY - 60 - t * 44);
+          ctx.lineTo(x + 70, baseY - 78 - t * 44);
+          ctx.lineTo(x + (140 + tw) / 2 + 14, baseY - 60 - t * 44);
+          ctx.closePath(); ctx.fill();
+        }
+        ctx.fillRect(x + 60, baseY - 60, 20, 60);
+      }
+      // 灯笼
+      for (var i = 0; i < 5; i++) {
+        var lx = ((i * 197) % W);
+        var ly = H * 0.14 + Math.sin(state.elapsed * 1.2 + i) * 8;
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = '#f97316';
+        ctx.beginPath(); ctx.ellipse(lx, ly, 11, 14, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 0.9;
+        ctx.fillRect(lx - 11, ly - 2, 22, 3);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawGlobe(d) {
+      var cx = W * 0.5, cy = H * 0.32, r = Math.min(W, H) * 0.3;
+      ctx.save();
+      ctx.globalAlpha = 0.16;
+      ctx.strokeStyle = '#a5f3fc';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+      for (var i = 1; i < 5; i++) {
+        ctx.beginPath(); ctx.ellipse(cx, cy, r, r * (i / 5), 0, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(34,211,238,0.2)';
+      ctx.beginPath(); ctx.ellipse(cx - r * 0.3, cy - r * 0.2, r * 0.36, r * 0.22, 0.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + r * 0.32, cy + r * 0.22, r * 0.28, r * 0.18, -0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      // 云
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = '#e0f2fe';
+      var off = (d * 0.06) % (W + 200);
+      for (var c = 0; c < 3; c++) {
+        var x = W - off + c * 260;
+        ctx.beginPath();
+        ctx.ellipse(x, H * 0.14 + c * 22, 52, 18, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawDeco(d) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (var i = 0; i < 5; i++) {
+        var seed = i * 91;
+        var x = ((seed * 29) % W + W - (d * 0.04 * (0.5 + i * 0.07)) % (W + 260) + (W + 260)) % (W + 260) - 130;
+        var y = H * 0.1 + ((seed * 17) % Math.round(H * 0.24)) + Math.sin(state.elapsed * 1.5 + i) * 7;
+        ctx.globalAlpha = 0.5;
+        ctx.font = (17 + (seed % 3) * 7) + 'px system-ui, "Apple Color Emoji", sans-serif';
+        ctx.fillText(theme.deco[i % theme.deco.length], x, y);
+      }
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+
+    function drawSpeedLines() {
+      var t = (state.speed - CFG.BASE_SPEED) / (CFG.MAX_SPEED - CFG.BASE_SPEED);
+      if (t <= 0.14 || state.phase !== 'playing') return;
+      var n = Math.round(t * 16);
+      var roll = Math.floor(state.distance * 0.5);
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.4, t * 0.42);
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 1.6;
+      for (var i = 0; i < n; i++) {
+        var seed = (i * 97 + roll) % 1000;
+        var y = ((seed * 37) % (H * 0.46)) + H * 0.24;
+        var side = (i % 2 === 0) ? -1 : 1;
+        var x0 = W / 2 + side * (W * 0.28 + ((seed * 13) % 70));
+        var len = 40 + ((seed * 7) % 100);
+        ctx.beginPath();
+        ctx.moveTo(x0, y);
+        ctx.lineTo(x0 + side * len, y + 3);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
 
     function drawRoad() {
       var near = { y: H * 0.98, half: W * 0.66 };
-      var far = { y: H * 0.33, half: W * 0.055 };
+      var far = { y: H * 0.35, half: W * 0.055 };
       ctx.beginPath();
       ctx.moveTo(W / 2 - near.half, near.y);
       ctx.lineTo(W / 2 - far.half, far.y);
@@ -579,284 +907,327 @@
       ctx.lineTo(W / 2 + near.half, near.y);
       ctx.closePath();
       var rg = ctx.createLinearGradient(0, far.y, 0, near.y);
-      rg.addColorStop(0, 'rgba(32,46,76,0.62)');
-      rg.addColorStop(0.5, 'rgba(18,28,52,0.86)');
-      rg.addColorStop(1, 'rgba(9,16,32,0.97)');
+      rg.addColorStop(0, hexA(theme.road[0], 0.86));
+      rg.addColorStop(1, hexA(theme.road[1], 0.97));
       ctx.fillStyle = rg;
       ctx.fill();
 
-      // 跑道分隔线（流动虚线）
-      var seg = 130;
-      var offset = state.distance % seg;
-      for (var lane = -1; lane <= 1; lane += 2) {
+      // 车道线
+      var seg = 130, offset = state.distance % seg;
+      for (var lane = 0; lane <= 1; lane++) {
+        var laneIdx = lane + 0.5;   // 0.5 / 1.5
         for (var z = -offset; z < CFG.FAR; z += seg) {
           var z1 = z < 0 ? 0 : z;
           var z2 = Math.min(CFG.FAR, z + seg * 0.5);
           if (z2 <= 0) continue;
-          var a = project(z1, lane * 0.5);
-          var b = project(z2, lane * 0.5);
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
+          var a = project(z1, laneIdx), b = project(z2, laneIdx);
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
           ctx.lineWidth = Math.max(1, 5 * a.scale);
-          ctx.strokeStyle = 'rgba(120,200,255,' + (0.08 + 0.5 * a.scale) + ')';
+          ctx.strokeStyle = theme.line + (0.1 + 0.5 * a.scale) + ')';
           ctx.stroke();
         }
       }
 
-      // 起点横向纹理
+      // 横向纹理
       var offz = state.distance % 260;
       for (var zz = -offz; zz < CFG.FAR; zz += 260) {
         if (zz < 0) continue;
-        var p1 = project(zz, -1);
-        var p2 = project(zz, 1);
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
+        var p1 = project(zz, 0), p2 = project(zz, 2);
+        ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
         ctx.lineWidth = Math.max(1, 2.4 * p1.scale);
-        ctx.strokeStyle = 'rgba(120,180,255,' + (0.05 + 0.18 * p1.scale) + ')';
+        ctx.strokeStyle = theme.line + (0.05 + 0.18 * p1.scale) + ')';
         ctx.stroke();
       }
 
-      // 两侧发光护栏
-      drawRail(-1);
-      drawRail(1);
+      drawRail(-0.34);
+      drawRail(2.34);
     }
 
-    function drawRail(side) {
-      var spacing = 220;
-      var off = state.distance % spacing;
+    function drawRail(laneIdx) {
+      var spacing = 220, off = state.distance % spacing;
       for (var z = -off; z < CFG.FAR; z += spacing) {
         if (z < 0) continue;
-        var p = project(z, side * 1.34);
+        var p = project(z, laneIdx);
         if (p.scale < 0.05) continue;
-        var h = 52 * p.scale + 4;
-        var w = 5 * p.scale + 1.2;
+        var h = 52 * p.scale + 4, w = 5 * p.scale + 1.2;
         var g = ctx.createLinearGradient(0, p.y - h, 0, p.y);
-        g.addColorStop(0, 'rgba(150,215,255,0.9)');
-        g.addColorStop(1, 'rgba(43,140,238,0.22)');
+        g.addColorStop(0, theme.rail[0]);
+        g.addColorStop(1, theme.rail[1]);
         ctx.fillStyle = g;
         ctx.fillRect(p.x - w / 2, p.y - h, w, h);
       }
     }
 
+    function drawFinish() {
+      var p = project(state.finish.z, 1);
+      var half = W * 0.34 * p.scale + W * 0.06;
+      var h = 60 * p.scale + 26;
+      // 门柱
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillRect(p.x - half, p.y - h, Math.max(3, 9 * p.scale), h);
+      ctx.fillRect(p.x + half - Math.max(3, 9 * p.scale), p.y - h, Math.max(3, 9 * p.scale), h);
+      // 格子横幅
+      var cols = 14, cw = (half * 2) / cols, ch = Math.max(6, 22 * p.scale);
+      for (var i = 0; i < cols; i++) {
+        for (var r = 0; r < 2; r++) {
+          ctx.fillStyle = ((i + r) % 2 === 0) ? '#ffffff' : '#16202e';
+          ctx.fillRect(p.x - half + i * cw, p.y - h + r * ch, cw, ch);
+        }
+      }
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = '900 ' + Math.max(10, 22 * p.scale + 8) + 'px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('FINISH', p.x, p.y - h - 12);
+    }
+
+    function hexA(hex, a) {
+      if (hex.charAt(0) !== '#') return hex;
+      var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+      return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+    }
+
+    /* ---------------- 建筑 ---------------- */
     function drawObject(o) {
-      if (o.destroyed) return;
+      if (o.kind !== 'building' || o.destroyed) return;
       var p = project(o.z, o.lane);
       if (p.scale <= 0.02) return;
 
-      if (o.kind === 'coin') {
-        var r = 15 * p.scale * 1.6;
-        o.spin += 0.09;
-        var squash = Math.abs(Math.cos(o.spin));
-        ctx.save();
-        ctx.translate(p.x, p.y - r * 1.5);
-        ctx.scale(Math.max(0.18, squash), 1);
-        var cg = ctx.createLinearGradient(0, -r, 0, r);
-        cg.addColorStop(0, '#fff4c9');
-        cg.addColorStop(0.5, '#ffd75e');
-        cg.addColorStop(1, '#e0980b');
-        ctx.beginPath();
-        ctx.arc(0, 0, r, 0, Math.PI * 2);
-        ctx.fillStyle = cg;
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-        ctx.lineWidth = Math.max(1, 2.2 * p.scale);
-        ctx.stroke();
-        // 内嵌五角星
-        ctx.globalAlpha = 0.92;
-        ctx.fillStyle = '#fffbe8';
-        traceStar(0, 0, r * 0.5, r * 0.22, 5);
-        ctx.fill();
-        ctx.restore();
-        return;
-      }
+      var boss = o.boss;
+      var w = (boss ? 150 : 108) * p.scale * 1.32;
+      var h = (boss ? 262 : 196) * p.scale * 1.32;
+      var x = p.x - w / 2, y = p.y - h;
+      var flash = o.flash > 0;
+      var radius = Math.max(3, 10 * p.scale * 1.32);
 
-      var w = (o.kind === 'boss' ? 190 : 96) * p.scale * 1.4;
-      var h = (o.kind === 'boss' ? 200 : 120) * p.scale * 1.4;
-      var x = p.x - w / 2;
-      var y = p.y - h;
-      var radius = Math.max(3, 12 * p.scale * 1.4);
-
-      if (o.kind === 'boss') {
-        ctx.save();
-        var pulse = o.hitFlash > 0 ? 1 : 0;
-        o.hitFlash = Math.max(0, (o.hitFlash || 0) - 0.016);
-        var bg = ctx.createLinearGradient(x, y, x + w, y + h);
-        bg.addColorStop(0, pulse ? '#ffd0ce' : '#4a1f5e');
-        bg.addColorStop(1, pulse ? '#ff6b66' : '#8a2fb0');
-        ctx.fillStyle = bg;
-        roundRect(x, y, w, h, radius);
-        ctx.fill();
-        // 触角
-        ctx.strokeStyle = pulse ? '#ffd0ce' : '#c98cff';
-        ctx.lineWidth = Math.max(2, 5 * p.scale);
-        ctx.beginPath();
-        ctx.moveTo(x + w * 0.2, y + 2);
-        ctx.lineTo(x + w * 0.08, y - h * 0.2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x + w * 0.8, y + 2);
-        ctx.lineTo(x + w * 0.92, y - h * 0.2);
-        ctx.stroke();
-        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-        ctx.lineWidth = Math.max(1, 2.4 * p.scale);
-        roundRect(x, y, w, h, radius);
-        ctx.stroke();
-        // 眼睛（白底 + 瞳孔）
-        ctx.fillStyle = pulse ? '#ffffff' : '#ff5a55';
-        ctx.beginPath();
-        ctx.arc(x + w * 0.32, y + h * 0.34, Math.max(2, w * 0.075), 0, Math.PI * 2);
-        ctx.arc(x + w * 0.68, y + h * 0.34, Math.max(2, w * 0.075), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#1a0a1f';
-        ctx.beginPath();
-        ctx.arc(x + w * 0.32, y + h * 0.34, Math.max(1, w * 0.03), 0, Math.PI * 2);
-        ctx.arc(x + w * 0.68, y + h * 0.34, Math.max(1, w * 0.03), 0, Math.PI * 2);
-        ctx.fill();
-        // 嘴
-        ctx.strokeStyle = '#1a0a1f';
-        ctx.lineWidth = Math.max(1.2, 3 * p.scale);
-        ctx.beginPath();
-        ctx.arc(x + w * 0.5, y + h * 0.54, w * 0.2, 0.15 * Math.PI, 0.85 * Math.PI);
-        ctx.stroke();
-        ctx.restore();
-
-        // BOSS 血条
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        roundRect(x, y - 16 * p.scale - 8, w, Math.max(6, 12 * p.scale), 6);
-        ctx.fill();
-        ctx.fillStyle = '#ef524d';
-        roundRect(x, y - 16 * p.scale - 8, w * (state.bossHp / CFG.BOSS_HP), Math.max(6, 12 * p.scale), 6);
-        ctx.fill();
-        return;
-      }
-
-      if (o.kind === 'question') {
-        var bob = Math.sin(state.elapsed * 3 + o.bob) * 6 * p.scale;
-        ctx.save();
-        var qg = ctx.createLinearGradient(x, y + bob, x + w, y + h + bob);
-        qg.addColorStop(0, '#7ad9ff');
-        qg.addColorStop(0.5, '#2b8cee');
-        qg.addColorStop(1, '#1b5ad0');
-        ctx.fillStyle = qg;
-        roundRect(x, y + bob, w, h, radius);
-        ctx.fill();
-        ctx.shadowColor = 'rgba(43,140,238,0.85)';
-        ctx.shadowBlur = 30 * p.scale;
-        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-        ctx.lineWidth = Math.max(1, 3 * p.scale);
-        roundRect(x, y + bob, w, h, radius);
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-        // 内圈
-        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-        ctx.lineWidth = Math.max(1, 1.6 * p.scale);
-        roundRect(x + w * 0.13, y + h * 0.13 + bob, w * 0.74, h * 0.74, radius * 0.7);
-        ctx.stroke();
-        ctx.fillStyle = '#fff';
-        ctx.font = '900 ' + Math.max(10, 62 * p.scale * 1.4) + 'px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('?', x + w / 2, y + h / 2 + bob);
-        ctx.restore();
-        return;
-      }
-
-      // 普通障碍
       ctx.save();
-      var g2 = ctx.createLinearGradient(x, y, x + w, y + h);
-      g2.addColorStop(0, o.color || '#ef524d');
-      g2.addColorStop(1, 'rgba(0,0,0,0.5)');
-      ctx.fillStyle = g2;
+      // 影子
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y + 4, w * 0.52, Math.max(3, 10 * p.scale), 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // 楼体
+      var bg = ctx.createLinearGradient(x, y, x + w, y + h);
+      bg.addColorStop(0, flash ? '#ffffff' : theme.wall);
+      bg.addColorStop(1, flash ? theme.accent : theme.wallDark);
+      ctx.fillStyle = bg;
       roundRect(x, y, w, h, radius);
       ctx.fill();
-      // 警示斜纹
-      ctx.save();
-      roundRect(x, y, w, h, radius);
-      ctx.clip();
-      ctx.globalAlpha = 0.28;
-      ctx.strokeStyle = '#ffe9a8';
-      ctx.lineWidth = Math.max(2, 7 * p.scale);
-      var stripe = Math.max(9, 24 * p.scale);
-      for (var s = -h; s < w + h; s += stripe) {
-        ctx.beginPath();
-        ctx.moveTo(x + s, y + h);
-        ctx.lineTo(x + s + h, y);
-        ctx.stroke();
+
+      // 窗户
+      var cols = boss ? 4 : 3, rows = boss ? 6 : 5;
+      var pad = w * 0.14;
+      var gw = (w - pad * 2) / cols, gh = (h * 0.62) / rows;
+      for (var r = 0; r < rows; r++) {
+        for (var c = 0; c < cols; c++) {
+          var lit = ((r * 3 + c * 5 + Math.floor(p.scale * 40) + (o.seed | 0)) % 4) !== 0;
+          ctx.fillStyle = lit ? 'rgba(255,232,150,0.9)' : 'rgba(10,20,40,0.55)';
+          var wx = x + pad + c * gw + gw * 0.18;
+          var wy = y + h * 0.12 + r * gh + gh * 0.16;
+          ctx.fillRect(wx, wy, gw * 0.64, gh * 0.58);
+        }
       }
-      ctx.restore();
-      ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-      ctx.lineWidth = Math.max(1, 2 * p.scale);
+
+      // 门
+      ctx.fillStyle = 'rgba(8,14,28,0.62)';
+      roundRect(x + w * 0.36, y + h * 0.78, w * 0.28, h * 0.22, Math.max(2, 5 * p.scale));
+      ctx.fill();
+
+      // 顶部招牌
+      var sign = Math.max(10, Math.min(w * 0.6, 46 * p.scale * 1.32 + 16));
+      ctx.fillStyle = flash ? '#ffffff' : theme.accent;
+      roundRect(p.x - sign / 2, y - sign * 0.62, sign, sign * 0.62 + 4, sign * 0.22);
+      ctx.fill();
+      ctx.fillStyle = flash ? theme.wallDark : 'rgba(10,16,30,0.85)';
+      ctx.font = '900 ' + (sign * 0.5) + 'px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('?', p.x, y - sign * 0.3);
+
+      // 轮廓
+      ctx.strokeStyle = flash ? '#fff' : 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = Math.max(1, 2.2 * p.scale);
       roundRect(x, y, w, h, radius);
       ctx.stroke();
       ctx.restore();
     }
 
-    function roundRect(x, y, w, h, r) {
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.arcTo(x + w, y, x + w, y + h, r);
-      ctx.arcTo(x + w, y + h, x, y + h, r);
-      ctx.arcTo(x, y + h, x, y, r);
-      ctx.arcTo(x, y, x + w, y, r);
-      ctx.closePath();
-    }
-
+    /* ---------------- 主角：手绘小猫 ---------------- */
     function drawPlayer() {
       var p = project(0, state.laneVisual);
-      var jump = state.jumpY;
+      var jumping = state.jumping;
+      var running = state.phase === 'playing' && !jumping;
+      var bob = running ? Math.sin(state.elapsed * 17) * 3 : 0;
       var x = p.x;
-      var size = 54 * 1.35;
-      var running = state.phase === 'playing' && !state.jumping;
-      var bob = running ? Math.sin(state.elapsed * 16) * 3 : 0;
-      var y = H * 0.88 + jump + bob;
+      var y = H * 0.885 + state.jumpY + bob;
+      var s = Math.max(0.72, Math.min(1.25, W / 780));
 
       // 影子
       ctx.save();
-      ctx.globalAlpha = state.jumping ? 0.18 : 0.34;
+      ctx.globalAlpha = jumping ? 0.16 : 0.32;
       ctx.fillStyle = '#000';
       ctx.beginPath();
-      ctx.ellipse(x, H * 0.9 + 16, size * (state.jumping ? 0.3 : 0.42), size * 0.17, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, H * 0.9 + 12, 34 * s * (jumping ? 0.62 : 1), 11 * s, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
 
-      // 奔跑残影（速度越快越明显）
+      // 速度残影
       var speedT = (state.speed - CFG.BASE_SPEED) / (CFG.MAX_SPEED - CFG.BASE_SPEED);
       if (running && speedT > 0.08) {
-        ctx.save();
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
-        ctx.font = size + 'px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
         for (var i = 1; i <= 3; i++) {
-          ctx.globalAlpha = 0.16 * (1 - i / 4) * (0.5 + speedT);
-          ctx.fillText('🐱', x - i * 15, y + 4);
+          ctx.save();
+          ctx.globalAlpha = 0.14 * (1 - i / 4) * (0.5 + speedT);
+          drawCat(x - i * 18 * s, y, s, state.elapsed - i * 0.02, { jumping: false, ghost: true });
+          ctx.restore();
         }
-        ctx.restore();
       }
 
       if (state.invuln > 0 && Math.floor(state.invuln * 12) % 2 === 0) ctx.globalAlpha = 0.45;
-      var halo = ctx.createRadialGradient(x, y + size * 0.3, 0, x, y + size * 0.3, size * 0.92);
-      halo.addColorStop(0, 'rgba(255,255,255,0.15)');
-      halo.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = halo;
-      ctx.beginPath();
-      ctx.arc(x, y + size * 0.3, size * 0.92, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.font = size + 'px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'alphabetic';
-      ctx.fillText('🐱', x, y + 4);
+      drawCat(x, y, s, state.elapsed, { jumping: jumping });
       ctx.globalAlpha = 1;
 
-      // 无敌护盾
       if (state.invuln > 0) {
         ctx.beginPath();
-        ctx.arc(x, y - size * 0.4, size * 0.72, 0, Math.PI * 2);
+        ctx.arc(x, y - 40 * s, 46 * s, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(255,215,94,0.75)';
         ctx.lineWidth = 3;
         ctx.stroke();
       }
+    }
+
+    function drawCat(x, y, s, t, o) {
+      var jumping = o && o.jumping;
+      var run = jumping ? 0 : Math.sin(t * 17);
+      var run2 = jumping ? 0 : Math.sin(t * 17 + Math.PI);
+      var fur = '#546686', furDark = '#3d4c6b', belly = '#eef4fc';
+      var pink = '#ffb3c1', ink = '#1b2437';
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(s, s);
+
+      // 尾巴
+      ctx.strokeStyle = fur;
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-13, -22);
+      ctx.quadraticCurveTo(-32 - run * 5, -34 + run * 6, -26 - run * 7, -52 + run * 9);
+      ctx.stroke();
+
+      // 远侧的腿
+      ctx.strokeStyle = furDark;
+      ctx.lineWidth = 8;
+      ctx.beginPath(); ctx.moveTo(-6, -14); ctx.lineTo(-6, -2 + (jumping ? -8 : run * 6)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(8, -14); ctx.lineTo(9, -2 + (jumping ? -10 : run2 * 6)); ctx.stroke();
+
+      // 身体
+      ctx.fillStyle = fur;
+      roundRect(-17, -40, 34, 30, 13); ctx.fill();
+      ctx.fillStyle = belly;
+      roundRect(-10, -32, 20, 19, 8); ctx.fill();
+
+      // 近侧的腿
+      ctx.strokeStyle = fur;
+      ctx.lineWidth = 9;
+      ctx.beginPath(); ctx.moveTo(-4, -14); ctx.lineTo(-3, -1 + (jumping ? -5 : run2 * 7)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(11, -1 + (jumping ? -12 : run * 7)); ctx.stroke();
+
+      // 爪子
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-3, -1 + (jumping ? -5 : run2 * 7), 3.6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(11, -1 + (jumping ? -12 : run * 7), 3.6, 0, Math.PI * 2); ctx.fill();
+
+      // 头
+      ctx.fillStyle = fur;
+      ctx.beginPath(); ctx.arc(0, -52, 18, 0, Math.PI * 2); ctx.fill();
+
+      // 耳朵
+      ctx.beginPath(); ctx.moveTo(-16, -58); ctx.lineTo(-10, -76); ctx.lineTo(-1, -62); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(16, -58); ctx.lineTo(10, -76); ctx.lineTo(1, -62); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = pink;
+      ctx.beginPath(); ctx.moveTo(-13, -60); ctx.lineTo(-10, -70); ctx.lineTo(-5, -62); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(13, -60); ctx.lineTo(10, -70); ctx.lineTo(5, -62); ctx.closePath(); ctx.fill();
+
+      // 口鼻区
+      ctx.fillStyle = belly;
+      ctx.beginPath(); ctx.ellipse(0, -48, 12, 8.6, 0, 0, Math.PI * 2); ctx.fill();
+
+      // 眼睛
+      var blink = (Math.sin(t * 1.6) > 0.985) ? 0.18 : 1;
+      ctx.fillStyle = ink;
+      ctx.beginPath(); ctx.ellipse(-6.4, -54, 3.4, 3.9 * blink, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(6.4, -54, 3.4, 3.9 * blink, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-5.4, -55.4, 1.2, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(7.4, -55.4, 1.2, 0, Math.PI * 2); ctx.fill();
+
+      // 鼻子与嘴
+      ctx.fillStyle = pink;
+      ctx.beginPath(); ctx.moveTo(0, -49.6); ctx.lineTo(-2.6, -47); ctx.lineTo(2.6, -47); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath(); ctx.moveTo(0, -47); ctx.lineTo(0, -44.8); ctx.stroke();
+      ctx.beginPath(); ctx.arc(-2.4, -44.6, 2.4, 0, Math.PI); ctx.stroke();
+      ctx.beginPath(); ctx.arc(2.4, -44.6, 2.4, 0, Math.PI); ctx.stroke();
+
+      // 胡须
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(-10, -49); ctx.lineTo(-22, -51); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-10, -46); ctx.lineTo(-22, -45); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(10, -49); ctx.lineTo(22, -51); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(10, -46); ctx.lineTo(22, -45); ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function drawParticles() {
+      state.particles.forEach(function (p) {
+        var a = Math.max(0, 1 - p.age / p.life);
+        ctx.globalAlpha = a;
+        if (p.coin) {
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.scale(Math.max(0.2, Math.abs(Math.cos(p.spin || 0))), 1);
+          var g = ctx.createLinearGradient(0, -p.size, 0, p.size);
+          g.addColorStop(0, '#fff3c4');
+          g.addColorStop(0.5, '#ffd75e');
+          g.addColorStop(1, '#e0980b');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(0, 0, p.size, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+          ctx.restore();
+        } else {
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size * (0.4 + a), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    function drawFloats() {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      state.floats.forEach(function (f) {
+        var a = Math.max(0, 1 - f.age / f.life);
+        ctx.globalAlpha = a;
+        ctx.font = '900 ' + f.size + 'px system-ui, "Apple Color Emoji", sans-serif';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(6,12,24,0.65)';
+        ctx.strokeText(f.text, f.x, f.y);
+        ctx.fillStyle = f.color;
+        ctx.fillText(f.text, f.x, f.y);
+      });
+      ctx.restore();
+      ctx.globalAlpha = 1;
     }
 
     /* ---------------- HUD ---------------- */
@@ -867,45 +1238,46 @@
       hudScore.textContent = Math.round(state.score);
       hudGold.textContent = state.gold;
       hudSpeed.textContent = (state.speed / CFG.BASE_SPEED).toFixed(1);
-      hudProgress.textContent = state.answered + '/' + total;
+      if (hudCombo) hudCombo.textContent = state.combo;
+      var total = state.planned || 1;
+      var pct = Math.min(100, Math.round((state.resolved / total) * 100));
+      if (hudBar) hudBar.style.width = pct + '%';
+      if (hudBarText) hudBarText.textContent = state.resolved + ' / ' + state.planned + ' 座建筑';
     }
 
-    function syncHudStatic() {
-      hudScore.textContent = Math.round(state.score);
-      hudGold.textContent = state.gold;
-    }
-
-    /* ---------------- 结束/开始 ---------------- */
+    /* ---------------- 结束 / 开始 ---------------- */
     function end(victory) {
       if (state.phase === 'finished') return;
       state.phase = 'finished';
       var accuracy = state.answered ? Math.round((state.correct / state.answered) * 100) : 0;
-      var bossDefeated = !state.boss || state.bossHp <= 0;
-      var bonus = victory && bossDefeated ? 100 : 0;
-      state.gold += bonus;
+      var bonus = victory ? 200 : 0;   // 完赛额外计入“得分”，金币只来自答对题目
+      state.score += bonus;
       state.result = {
         victory: victory,
         score: Math.round(state.score),
         gold: state.gold,
         correct: state.correct,
         answered: state.answered,
-        total: total,
+        total: state.planned,
         accuracy: accuracy,
         bestCombo: state.bestCombo,
+        dodged: state.dodged,
         wrongIds: state.wrongIds.slice(),
         bonus: bonus,
         durationSec: Math.round(state.elapsed)
       };
       if (opts.onEnd) opts.onEnd(state.result);
 
+      var stars = victory ? (accuracy >= 90 ? '⭐⭐⭐' : accuracy >= 70 ? '⭐⭐' : '⭐') : '💥';
       overlay.innerHTML =
         '<div class="overlay"><div class="overlay-card result-card">' +
-          '<div style="font-size:52px">' + (victory ? '🏆' : '💥') + '</div>' +
-          '<div class="result-title">' + (victory ? '闯关成功！' : '闯关失败') + '</div>' +
+          '<div style="font-size:52px">' + (victory ? '🏁' : '💥') + '</div>' +
+          '<div class="result-title">' + (victory ? '冲过终点！' : '生命耗尽') + '</div>' +
+          '<div class="result-stars">' + stars + '</div>' +
           '<p class="muted" style="margin-top:6px;font-size:13.5px">' +
             (victory
-              ? (bossDefeated ? '你完成了全部题目并击败 BOSS，积分已实时计入排行榜' : '你完成了全部题目，积分已实时计入排行榜')
-              : '生命值耗尽，再挑战一次会更熟练') +
+              ? '本关共 ' + state.planned + ' 座建筑，答对 ' + state.correct + ' 题、躲开 ' + state.dodged + ' 座'
+              : '答错的建筑会扣生命，换道或跳跃可以躲开建筑（躲开不会出题）') +
           '</p>' +
           '<div class="result-grid">' +
             '<div class="result-cell"><b>' + state.result.score + '</b><span>本次得分</span></div>' +
@@ -934,17 +1306,17 @@
       overlay.innerHTML =
         '<div class="overlay"><div class="overlay-card center">' +
           '<div style="font-size:50px">🐱</div>' +
-          '<h2 style="margin-top:8px;font-size:23px;font-weight:900">' + subjectName + ' · ' + difficultyName + '</h2>' +
-          '<p class="muted" style="margin-top:8px;font-size:13.5px">三跑道跑酷闯关，答对题目清除障碍，最后击败 BOSS</p>' +
-          '<div class="grid grid-3" style="margin:18px 0;text-align:left">' +
-            '<div class="result-cell"><b>' + total + '</b><span>本次题目</span></div>' +
-            '<div class="result-cell"><b>' + CFG.MAX_LIVES + '</b><span>生命值</span></div>' +
-            '<div class="result-cell"><b>+100</b><span>通关奖励金币</span></div>' +
+          '<h2 style="margin-top:8px;font-size:23px;font-weight:900">' + esc(subjectName) + ' · ' + esc(difficultyName) + '</h2>' +
+          '<p class="muted" style="margin-top:8px;font-size:13.5px">跑起来，撞到建筑就会出题，答对让建筑爆金币</p>' +
+          '<div class="rule-grid">' +
+            '<div class="rule-item"><span>🏢</span><div><b>撞建筑 → 出题</b><p>换道或跳跃躲开就不会出题</p></div></div>' +
+            '<div class="rule-item"><span>🪙</span><div><b>答对 → 爆金币</b><p>题目越难，金币越多（基础 10 / 巩固 20 / 冲刺 30）</p></div></div>' +
+            '<div class="rule-item"><span>❤️</span><div><b>答错 → 掉血</b><p>共 3 点生命，连对可以叠连击奖励</p></div></div>' +
+            '<div class="rule-item"><span>🏁</span><div><b>跑完全程 → 结算</b><p>躲得越稳、答得越准，得分越高</p></div></div>' +
           '</div>' +
-          '<div class="muted" style="font-size:12.5px;line-height:1.9;text-align:left;background:#f7fafd;border-radius:12px;padding:12px 14px">' +
-            '⬅️ ➡️ / A D 切换跑道　空格 / ↑ 跳跃<br>' +
-            '📱 手机：左右滑动切换跑道，向上滑动跳跃<br>' +
-            '📝 答对：清障 + 加速 + 20 金币　答错：扣 1 点生命' +
+          '<div class="muted" style="font-size:12.5px;line-height:1.9;text-align:left;background:#f7fafd;border-radius:12px;padding:12px 14px;margin-top:14px">' +
+            '⬅️ ➡️ / A D 切换跑道　空格 / ↑ 跳跃（跳过建筑＝躲开）<br>' +
+            '📱 手机：左右滑动换道，向上滑动跳跃　⌨️ 答题时按 1-4 选选项，回车提交' +
           '</div>' +
           '<div class="row" style="margin-top:18px;gap:10px">' +
             '<button class="btn btn-primary btn-lg grow" id="gStart">开始跑酷</button>' +
@@ -963,6 +1335,7 @@
       var cd = document.createElement('div');
       cd.className = 'game-countdown';
       shell.appendChild(cd);
+      state.phase = 'countdown';
       var n = 3;
       (function step() {
         if (n > 0) {
@@ -1012,10 +1385,11 @@
     function jump() {
       if (state.phase !== 'playing' || state.jumping) return;
       state.jumping = true;
-      state.vy = -880;
+      state.vy = -900;
+      dust(project(0, state.laneVisual).x, H * 0.9 + 12);
     }
     function keyHandler(e) {
-      if (state.phase === 'question' && e.key === 'Escape') return;
+      if (state.phase === 'question' && keyAnswer) { keyAnswer(e); if (e.key === 'Enter') e.preventDefault(); return; }
       var k = e.key;
       if ((k === 'p' || k === 'P') && (state.phase === 'playing' || state.phase === 'paused')) {
         e.preventDefault();
@@ -1030,17 +1404,17 @@
 
     var touchStart = null;
     canvas.addEventListener('touchstart', function (e) {
-      var t = e.changedTouches[0];
-      touchStart = { x: t.clientX, y: t.clientY, at: Date.now() };
+      var t2 = e.changedTouches[0];
+      touchStart = { x: t2.clientX, y: t2.clientY };
     }, { passive: true });
     canvas.addEventListener('touchend', function (e) {
       if (!touchStart) return;
-      var t = e.changedTouches[0];
-      var dx = t.clientX - touchStart.x;
-      var dy = t.clientY - touchStart.y;
+      var t2 = e.changedTouches[0];
+      var dx = t2.clientX - touchStart.x;
+      var dy = t2.clientY - touchStart.y;
       if (Math.abs(dx) < 24 && Math.abs(dy) < 24) {
         var rect = canvas.getBoundingClientRect();
-        move(t.clientX - rect.left < rect.width / 2 ? -1 : 1);
+        move(t2.clientX - rect.left < rect.width / 2 ? -1 : 1);
       } else if (dy < -34 && Math.abs(dy) > Math.abs(dx)) {
         jump();
       } else if (Math.abs(dx) > Math.abs(dy)) {
@@ -1079,7 +1453,8 @@
         document.removeEventListener('keydown', keyHandler);
         window.removeEventListener('resize', resize);
       },
-      state: state
+      state: state,
+      theme: theme
     };
   }
 
@@ -1089,5 +1464,5 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  window.PKGame = { mount: mount, CFG: CFG };
+  window.PKGame = { mount: mount, CFG: CFG, THEMES: THEMES, coinBase: coinBase };
 })();
