@@ -326,6 +326,26 @@
   /* ============================================================
    * 登录页（学生 / 老师共用一个入口，切换简洁）
    * ============================================================ */
+  /** 身份不匹配时的拦截页（学生/老师身份在登录页确定，之后不能互切） */
+  function blockedView(role) {
+    var isTeacherRole = role === 'teacher';
+    return '<div class="center fade-in" style="padding-top:40px">' +
+      '<div class="card center" style="max-width:520px;margin:0 auto;padding:34px 26px">' +
+        '<div style="font-size:44px">🔒</div>' +
+        '<h2 style="margin-top:12px;font-size:20px;font-weight:900">当前身份无法进入这个页面</h2>' +
+        '<p class="muted" style="font-size:13.5px;margin-top:8px;line-height:1.8">' +
+          (isTeacherRole
+            ? '你当前是<b>老师</b>身份，不能进入学生端。<br>身份在登录时确定，如需以学生身份使用，请退出后重新选择身份登录。'
+            : '你当前是<b>学生</b>身份，不能进入教师端。<br>身份在登录时确定，如需以老师身份使用，请退出后重新选择身份登录。') +
+        '</p>' +
+        '<div class="row" style="gap:10px;margin-top:18px;justify-content:center">' +
+          '<button class="btn btn-primary" data-go="' + (isTeacherRole ? '#/teacher' : '#/student') + '">回到我的课堂</button>' +
+          '<button class="btn btn-ghost" data-action="logout">退出并切换身份</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
   function viewLogin() {
     var role = ui.loginRole || S.user.role || 'student';
     var isStu = role !== 'teacher';
@@ -483,19 +503,15 @@
           '<div class="profile-avatar">' + S.user.emoji + '</div>' +
           '<div class="grow">' +
             '<div class="row" style="gap:8px;flex-wrap:wrap"><h2 style="font-size:22px;font-weight:900">' + esc(S.user.name) + '</h2>' +
-            '<span class="badge" style="background:rgba(255,255,255,.24);color:#fff">' + (isTeacher() ? '老师' : '学生') + '</span>' +
+            '<span class="badge" style="background:rgba(255,255,255,.24);color:#fff">学生</span>' +
             (myClass() ? '<span class="badge" style="background:rgba(255,255,255,.24);color:#fff">' + esc(myClass().name) + ' · 班级码 ' + esc(myClass().code) + '</span>' : '') +
             '</div>' +
             '<p style="opacity:.9;font-size:13px;margin-top:4px">' +
-              (isTeacher()
-                ? '当前是老师身份：老师不用加入班级，请到「教师端」创建并管理班级'
-                : (myClass() ? ('已加入 ' + esc(myClass().name) + '，欢迎回来，今天也要加油！') : '还没有班级，输入老师给的 4 位班级码即可加入')) +
+              (myClass() ? ('已加入 ' + esc(myClass().name) + '，欢迎回来，今天也要加油！') : '还没有班级，输入老师给的 4 位班级码即可加入') +
             '</p>' +
           '</div>' +
           '<div class="row" style="gap:8px;flex-wrap:wrap">' +
-            (isTeacher()
-              ? '<button class="btn btn-ghost btn-sm" data-action="join-class">加入班级</button>'
-              : (myClass() ? '<button class="btn btn-ghost btn-sm" data-action="join-class">切换班级</button>' : '<button class="btn btn-accent btn-sm" data-action="join-class">加入班级</button>')) +
+            (myClass() ? '<button class="btn btn-ghost btn-sm" data-action="join-class">切换班级</button>' : '<button class="btn btn-accent btn-sm" data-action="join-class">加入班级</button>') +
             '<button class="btn btn-ghost btn-sm" data-action="rename">修改昵称</button>' +
           '</div>' +
         '</div>' +
@@ -1340,8 +1356,13 @@
 
     if (currentGame) { currentGame.destroy(); currentGame = null; }
 
+    // 身份在登录页确定后不可跨端：学生进不了教师端，老师也进不了学生端
+    var crossRole = S.loggedIn && seg[0] !== 'login' &&
+      ((isTeacher() && seg[0] === 'student') || (!isTeacher() && seg[0] === 'teacher'));
+
     if (!S.loggedIn) html = viewLogin();
     else if (seg[0] === 'login') html = viewLogin();
+    else if (crossRole) html = blockedView(isTeacher() ? 'teacher' : 'student');
     else if (seg[0] === 'home') html = viewHome();
     else if (seg[0] === 'my') html = isTeacher() ? viewTeacher() : viewStudent();
     else if (seg[0] === 'student') {
@@ -1357,9 +1378,9 @@
 
     $('#view').innerHTML = html;
 
-    if (seg[0] === 'student' && seg[1] === 'game') mountGame();
-    if (seg[0] === 'student' && seg[1] === 'join') openJoinClass(seg[2]);
-    if (seg[0] === 'teacher' && ui.teacherTab === 'race') {
+    if (!crossRole && seg[0] === 'student' && seg[1] === 'game') mountGame();
+    if (!crossRole && seg[0] === 'student' && seg[1] === 'join') openJoinClass(seg[2]);
+    if (!crossRole && seg[0] === 'teacher' && ui.teacherTab === 'race') {
       var board = $('#raceBoard');
       if (board && raceState && raceState.running) board.innerHTML = raceBoardHtml();
     }
@@ -1370,9 +1391,14 @@
 
   function updateNav(route) {
     var seg = route.segments;
-    var key = seg[1] === 'garden' ? 'garden' : seg[0];
-    if (key === 'student' || key === 'teacher') key = 'my';   // 学生端 / 教师端共用一个「我的课堂」入口
+    var key;
     if (!S.loggedIn) key = '';
+    else if (seg[0] === 'student' && isTeacher()) key = '';
+    else if (seg[0] === 'teacher' && !isTeacher()) key = '';
+    else {
+      key = seg[1] === 'garden' ? 'garden' : seg[0];
+      if (key === 'student' || key === 'teacher') key = 'my';   // 学生端 / 教师端共用一个「我的课堂」入口
+    }
     Array.prototype.forEach.call(document.querySelectorAll('.nav a'), function (a) {
       var target = a.getAttribute('data-nav');
       a.classList.toggle('active', target === key);
@@ -1399,12 +1425,6 @@
       roleEl.classList.toggle('teacher', isTeacher());
     }
     document.body.classList.toggle('auth', !!S.loggedIn);
-    var seg = $('#roleSeg');
-    if (seg) {
-      Array.prototype.forEach.call(seg.querySelectorAll('button'), function (b) {
-        b.classList.toggle('on', b.getAttribute('data-role') === (isTeacher() ? 'teacher' : 'student'));
-      });
-    }
     var outBtn = $('#logoutBtn');
     if (outBtn) outBtn.style.display = S.loggedIn ? '' : 'none';
     updateLiveBadge();
@@ -1614,16 +1634,6 @@
         location.hash = '#/student';
         render();
         maybeFirstGuide();
-        break;
-      }
-      case 'set-role': {
-        var nextRole = actionEl.getAttribute('data-role') === 'teacher' ? 'teacher' : 'student';
-        if (!S.loggedIn) { ui.loginRole = nextRole; location.hash = '#/login'; render(); break; }
-        S.user.role = nextRole;
-        save();
-        toast(nextRole === 'teacher' ? '已切换到老师视角' : '已切换到学生视角');
-        location.hash = nextRole === 'teacher' ? '#/teacher' : '#/student';
-        render();
         break;
       }
       case 'logout':
@@ -1853,7 +1863,7 @@
     return [
       { e: '🏫', who: '老师', t: '创建班级，秒出班级码', d: '进入「教师端 → 班级学情」，点「创建班级」，填好名称点创建，界面会立刻弹出 4 位班级码，点「复制班级码 / 复制邀请链接」发给学生即可。老师账号不会作为学生加入班级。' },
       { e: '🧑‍🎓', who: '学生', t: '用班级码加入班级', d: '进入「学生端」，点右上角「加入班级」，输入老师给的 4 位数字班级码。加入后你的积分会算进这个班级。' },
-      { e: '🏃', who: '学生', t: '跑酷闯关答题', d: '在「学生端」选学科与难度，点「开始闯关」。三跑道跑酷，答对清除障碍并加速，答错扣 1 点生命并自动收录错题。键盘 ←/→ 换道、空格跳跃，手机左右滑动换道。' },
+      { e: '🏃', who: '学生', t: '跑酷闯关答题', d: '在「学生端」选学科与难度，点「开始闯关」。三跑道跑酷：撞到建筑才会弹出题目，答对让建筑爆出金币（题目越难金币越多），答错扣 1 点生命并自动收录错题；换道或跳跃躲开建筑就不会出题。每个学科一套专属场景，键盘 ←/→ 换道、空格跳跃，手机左右滑动换道。' },
       { e: '📝', who: '老师', t: '从题库发布作业', d: '进入「教师端 → 作业管理 → 发布作业」，填标题、选班级，再从题库中勾选题目组成作业。需要新题请先到「题库管理 → 新增题目」，保存后即可选中——作业题目统一来自题库，无需另外上传。' },
       { e: '🧯', who: '学生', t: '错题修复与作业', d: '答错的题会自动进入「错题修复」，答对后自动移出。老师布置的作业会出现在「学生端 → 待完成作业」，点「去完成」即可作答。' },
       { e: '🏆', who: '全员', t: '实时积分榜单', d: '每次答题的积分都会实时计入榜单，支持今日 / 本周 / 总榜与分学科筛选，含前三名领奖台与实时动态。把网址发给同学，多台设备打开即可同屏竞技。' },
@@ -1866,7 +1876,7 @@
     var html = '<div class="row between"><h3 class="modal-title">📖 使用解说</h3>' +
       (inModal ? '<button class="btn btn-ghost btn-sm" data-close>关闭</button>' : '<button class="btn btn-primary btn-sm" data-action="start-game">🚀 开始体验</button>') +
       '</div>' +
-      '<p class="muted modal-sub">30 秒了解全部玩法。学生先加入班级再闯关，老师在教师端建班、出题与发布作业。</p>' +
+      '<p class="muted modal-sub">30 秒了解全部玩法。学生填昵称即可进（班级码选填），老师进入后建班出题；<b>身份在登录页选定后不会互相切换</b>，要换身份请先「退出」。</p>' +
       '<div class="guide-grid">' + guideSteps().map(function (s, i) {
         return '<div class="guide-step">' +
           '<div class="guide-num">' + (i + 1) + '</div>' +
