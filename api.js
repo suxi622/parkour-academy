@@ -644,6 +644,23 @@
         return cloud.ready;
       },
       takeClasses: function () { var out = farClasses.slice(); farClasses = []; return out; },
+      /** 主动向云端中继拉一次最新消息（学生输班级码时用来即时查找班级，不必等轮询） */
+      refreshCloud: function () {
+        if (mode !== 'cloud') return Promise.resolve(false);
+        return fetch(CLOUD.base + '/' + CLOUD.topic + '/json?since=' + CLOUD.sincePoll + '&poll=1', { cache: 'no-store' })
+          .then(function (r) { return r.text(); })
+          .then(function (text) {
+            (text || '').split('\n').forEach(function (line) {
+              if (!line.trim()) return;
+              try {
+                var m = JSON.parse(line);
+                if (m && m.message) { var body = JSON.parse(m.message); body.msgId = m.id; ingest(body); }
+              } catch (e) {}
+            });
+            return true;
+          })
+          .catch(function () { return false; });
+      },
       publishClass: function (payload) {
         if (mode !== 'cloud') return false;
         fetch(CLOUD.base + '/' + CLOUD.topic, {
