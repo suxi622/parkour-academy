@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   var PK = window.PK;
-  var APP_VERSION = 'v7';      // 界面上会显示，方便确认手机上跑的是不是最新版
+  var APP_VERSION = 'v8';      // 界面上会显示，方便确认手机上跑的是不是最新版
 
   /* ============================================================
    * 工具
@@ -160,7 +160,10 @@
     teacherTab: 'classes',
     questionFilter: { subject: 'all', type: 'all', difficulty: 'all' },
     hwPick: { subject: 'all', type: 'all', difficulty: 'all' },
-    hwSelected: []
+    hwSelected: [],
+    loginMsg: '',
+    joinMsg: '',
+    pendingJoin: null      // 查不到班级时，记住学校 + 班级码用于「离线加入」
   };
 
   function bank() { return PK.QUESTION_BANK.concat(S.customQuestions || []); }
@@ -433,6 +436,7 @@
     if ((S.joinedClassIds || []).indexOf(cls.id) === -1) S.joinedClassIds = (S.joinedClassIds || []).concat(cls.id);
     S.user.klass = cls.name;
     if (cls.gradeKey) { S.user.gradeKey = cls.gradeKey; S.user.gradeLabel = cls.gradeLabel || ''; }
+    ui.joinMsg = '';
     leaderboard.me.klass = cls.name;
     if (leaderboard.updateProfile) {
       leaderboard.updateProfile({
@@ -440,6 +444,30 @@
         school: S.user.school, gradeKey: S.user.gradeKey, gradeLabel: S.user.gradeLabel
       });
     }
+    return true;
+  }
+
+  /** 云端暂时连不上时的兜底：先按「学校 + 班级码」在本机建一个班级并加入 */
+  function joinOffline(school, code) {
+    var sc = String(school || '').trim().slice(0, 20);
+    var c0 = String(code || '').replace(/\s/g, '');
+    if (!sc || !/^\d{4}$/.test(c0)) return false;
+    var cls = classBySchoolCode(sc, c0);
+    if (!cls) {
+      cls = {
+        id: uid('cls-offline'), name: '班级 ' + c0 + '（离线加入）', code: c0, school: sc,
+        gradeKey: '', gradeLabel: '', stage: '', owner: '', teacher: '',
+        students: 0, avg: 0, rate: 0, createdAt: Date.now(), offline: true
+      };
+      S.classes.push(cls);
+    }
+    S.user.school = sc;
+    S.lastSchool = sc;
+    joinClassById(cls);
+    save();
+    toast('已按班级码加入「' + cls.name + '」，联网后会自动和老师的班级同步', 'ok');
+    confetti(30);
+    render();
     return true;
   }
 
@@ -515,6 +543,13 @@
       if (fresh[k] && cur[k] !== fresh[k]) { cur[k] = fresh[k]; changed = true; }
     });
     cur.fromCloud = true;
+    cur.offline = false;
+    // 如果学生之前是「离线加入」的，这里顺手把昵称里的班级名 / 年级同步过来
+    var mine = myClass();
+    if (changed && mine && mine.id === cur.id) {
+      S.user.klass = cur.name;
+      if (cur.gradeKey) { S.user.gradeKey = cur.gradeKey; S.user.gradeLabel = cur.gradeLabel || ''; }
+    }
     return changed;
   }
 
@@ -892,19 +927,24 @@
       '</section>';
     }
 
-    // 还没加入班级 → 直接在页面上放一个「加入班级」卡片，不用点弹窗，避免点了"没反应"
-    if (!myClass()) {
-      html += '<section class="card join-card fade-in" style="margin-top:18px">' +
-        '<div class="card-title"><span class="emoji">🎒</span>加入班级 <span class="card-sub">学校名 + 4 位班级码，和老师保持一致</span></div>' +
-        '<div class="join-inline">' +
-          '<input class="input" id="jiSchool" maxlength="20" placeholder="学校名称（要和老师填的一样）" value="' + esc(S.user.school || S.lastSchool || '') + '">' +
-          '<input class="input code-input" id="jiCode" inputmode="numeric" maxlength="4" placeholder="4 位班级码">' +
-          '<button class="btn btn-primary" data-action="join-inline">加入班级</button>' +
-        '</div>' +
-        '<div id="jiMsg" class="login-msg">' + (ui.joinMsg || '') + '</div>' +
-        '<p class="muted" style="font-size:12px">加入后就能看到同班同学 / 同年级同学的排名，以及老师布置的作业。</p>' +
-      '</section>';
-    }
+    // 加入 / 切换班级：直接把输入框放在页面上，不依赖弹窗，避免手机上"点了没反应"
+    var curCls = myClass();
+    html += '<section class="card join-card fade-in" style="margin-top:18px">' +
+      '<div class="card-title"><span class="emoji">🎒</span>' + (curCls ? '切换班级' : '加入班级') +
+        '<span class="card-sub">' + (curCls
+          ? '当前：' + esc(curCls.name) + '（班级码 ' + esc(curCls.code) + '）'
+          : '学校名 + 4 位班级码，要和老师保持一致') + '</span></div>' +
+      '<div class="join-inline">' +
+        '<input class="input" id="jiSchool" maxlength="20" placeholder="学校名称（要和老师填的一样）" value="' + esc(S.user.school || S.lastSchool || '') + '">' +
+        '<input class="input code-input" id="jiCode" inputmode="numeric" maxlength="4" placeholder="4 位班级码">' +
+        '<button class="btn btn-primary" data-action="join-inline">' + (curCls ? '切换班级' : '加入班级') + '</button>' +
+      '</div>' +
+      '<div id="jiMsg" class="login-msg">' + (ui.joinMsg || '') + '</div>' +
+      '<div id="jiFallback"></div>' +
+      '<p class="muted" style="font-size:12px">' + (curCls
+        ? '输入新的学校名 + 班级码即可切换；原来的班级记录会保留。'
+        : '加入后就能看到同班同学 / 同年级同学的排名，以及老师布置的作业。') + '</p>' +
+    '</section>';
 
     var mine = myAsks();
     if (mine.length) {
@@ -2793,17 +2833,7 @@
         break;
       }
       case 'rename': {
-        var name = window.prompt('请输入新的昵称', S.user.name);
-        if (name && name.trim()) {
-          S.user.name = name.trim().slice(0, 12);
-          leaderboard.me.name = S.user.name;
-          if (leaderboard.updateProfile) {
-            leaderboard.updateProfile({ name: S.user.name, emoji: S.user.emoji, klass: S.user.klass });
-          }
-          save();
-          render();
-          toast('昵称已更新', 'ok');
-        }
+        openRenameModal();
         break;
       }
       case 'lb-range':
@@ -3054,16 +3084,21 @@
         if (!jiSchoolVal) { if (jiMsg) jiMsg.innerHTML = '<span class="bad">请先填写学校名称</span>'; toast('请先填写学校名称', 'bad'); break; }
         if (!/^\d{4}$/.test(jiCodeVal)) { if (jiMsg) jiMsg.innerHTML = '<span class="bad">班级码是 4 位数字，请检查一下</span>'; toast('班级码是 4 位数字', 'bad'); break; }
         if (jiMsg) jiMsg.innerHTML = '🔍 正在查找班级…';
+        var jiFb = document.getElementById('jiFallback');
+        if (jiFb) jiFb.innerHTML = '';
         ui.joinMsg = '';
         resolveClass(jiSchoolVal, jiCodeVal, function (cls) {
           if (!cls) {
             var err = '<span class="bad">没找到这个班级：请确认学校名与老师给的一致（差一个字都不算同一所学校），班级码为 4 位数字。</span>';
             ui.joinMsg = err;                 // 记住提示，页面被刷新也还在
+            ui.pendingJoin = { school: jiSchoolVal, code: jiCodeVal };
             if (!setMsgById('jiMsg', err)) render();
+            if (setMsgById('jiFallback', '<button class="btn btn-ghost btn-sm" data-action="join-offline">网络连不上云端？点这里仍然加入这个班级码</button>')) { /* 显示兜底按钮 */ }
             toast('没找到这个班级，请核对学校名与班级码', 'bad');
             return;
           }
           ui.joinMsg = '';
+          ui.pendingJoin = null;
           S.user.school = jiSchoolVal.slice(0, 20);
           S.lastSchool = S.user.school;
           joinClassById(cls);
@@ -3072,6 +3107,13 @@
           confetti(40);
           render();
         });
+        break;
+      }
+      case 'join-offline': {
+        var pj = ui.pendingJoin;
+        if (!pj) { toast('请先填写学校名与班级码', 'bad'); break; }
+        if (!joinOffline(pj.school, pj.code)) { toast('学校名或班级码格式不对', 'bad'); break; }
+        ui.pendingJoin = null;
         break;
       }
       case 'publish-homework':
@@ -3312,6 +3354,52 @@
     wrap.querySelector('[data-copy-link]').onclick = function () { copyText(link, '邀请链接已复制'); };
   }
 
+  /** 修改昵称：手机上有浏览器会禁用 window.prompt，所以改成应用内弹窗 */
+  function openRenameModal() {
+    if (!S.loggedIn) { toast('请先登录', 'bad'); return; }
+    var emojis = ['🐱', '🦖', '🚀', '🦄', '🐰', '🐯', '🐼', '🦊', '🐨', '🐹', '🐻', '🐵', '🐧', '🐬', '🦋', '🐢', '🌟', '🍀'];
+    var wrap = overlay(
+      '<div class="row between"><h3 class="modal-title">✏️ 修改昵称</h3><button class="btn btn-ghost btn-sm" data-close>关闭</button></div>' +
+      '<p class="muted modal-sub">昵称和头像会显示在班级榜单、作业提交和提问里。</p>' +
+      '<div class="form-field"><label>昵称</label><input class="input" id="rnName" maxlength="12" placeholder="例如：小明" value="' + esc(S.user.name || '') + '"></div>' +
+      '<div class="form-field"><label>头像</label><div class="emoji-pick" id="rnEmoji">' +
+        emojis.map(function (em) {
+          return '<button type="button" class="emoji-btn' + (em === S.user.emoji ? ' on' : '') + '" data-emoji="' + em + '">' + em + '</button>';
+        }).join('') + '</div></div>' +
+      '<div id="rnMsg" class="login-msg"></div>' +
+      '<div class="row" style="gap:10px;margin-top:6px"><button class="btn btn-primary grow" id="rnSave">保存</button></div>'
+    );
+    wrap.querySelector('[data-close]').onclick = function () { wrap.remove(); };
+    var picked = S.user.emoji || '🐱';
+    var emojiBox = wrap.querySelector('#rnEmoji');
+    emojiBox.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-emoji]');
+      if (!b) return;
+      picked = b.getAttribute('data-emoji');
+      Array.prototype.forEach.call(emojiBox.querySelectorAll('.emoji-btn'), function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+    });
+    wrap.querySelector('#rnSave').onclick = function () {
+      var name = wrap.querySelector('#rnName').value.trim();
+      if (!name) { wrap.querySelector('#rnMsg').innerHTML = '<span class="bad">请填写昵称</span>'; return; }
+      S.user.name = name.slice(0, 12);
+      S.user.emoji = picked;
+      leaderboard.me.name = S.user.name;
+      leaderboard.me.emoji = S.user.emoji;
+      if (leaderboard.updateProfile) {
+        leaderboard.updateProfile({
+          name: S.user.name, emoji: S.user.emoji, klass: S.user.klass,
+          school: S.user.school, gradeKey: S.user.gradeKey, gradeLabel: S.user.gradeLabel
+        });
+      }
+      save();
+      wrap.remove();
+      toast('昵称已更新为「' + S.user.name + '」', 'ok');
+      render();
+    };
+    setTimeout(function () { var i = wrap.querySelector('#rnName'); if (i) i.focus(); }, 30);
+  }
+
   function openJoinClass(prefill) {
     if (isTeacher()) {
       toast('老师账号不能作为学生加入班级，请在教师端创建 / 管理班级', 'bad');
@@ -3327,6 +3415,7 @@
         '<button class="btn btn-primary grow" id="jcJoin">加入班级</button>' +
         '<button class="btn btn-ghost" data-retry type="button">重新查找</button>' +
       '</div>' +
+      '<div id="jcFallback" style="margin-top:10px"></div>' +
       '<p class="muted modal-sub" style="margin-top:10px">加入不了？请让老师在「教师端 → 班级学情」里点开班级码再发你一次，并确认<b>学校名完全一致</b>（差一个字都不算同一所学校）。</p>'
     );
     wrap.querySelector('[data-close]').onclick = function () { wrap.remove(); };
@@ -3349,8 +3438,11 @@
           var errHtml = '<span class="bad">没找到这个班级：请确认「学校名」和老师给的一致，班级码是老师教师端里的 4 位数字。<br>也可以点「重新查找」再试一次。</span>';
           if (setMsgById('jcMsg', errHtml)) toast('没找到这个班级，请核对学校名与班级码', 'bad');
           else toast('没找到这个班级，请核对学校名与班级码', 'bad');
+          ui.pendingJoin = { school: school, code: code };
+          setMsgById('jcFallback', '<button class="btn btn-ghost btn-sm btn-block" data-action="join-offline">网络连不上云端？点这里仍然加入这个班级码</button>');
           return;
         }
+        ui.pendingJoin = null;
         S.user.school = school.slice(0, 20);
         S.lastSchool = S.user.school;
         joinClassById(cls);
