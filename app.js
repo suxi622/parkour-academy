@@ -366,6 +366,7 @@
         school: S.user.school, gradeKey: S.user.gradeKey, gradeLabel: S.user.gradeLabel
       });
     }
+    if (leaderboard.setReady) leaderboard.setReady(true);
     save();
   }
 
@@ -3456,6 +3457,7 @@
   } else {
     render();
   }
+  if (S.loggedIn && leaderboard.setReady) leaderboard.setReady(true);
 
   // 登录后首次进入自动弹出「使用解说」（勾选“下次不再弹出”后不再自动弹）
   if (!S.seenGuide && S.loggedIn) {
