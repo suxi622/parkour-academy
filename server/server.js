@@ -152,6 +152,9 @@ function createParticipant(profile) {
     name: String(profile.name || '同学').slice(0, 16),
     emoji: String(profile.emoji || '🐱').slice(0, 4),
     klass: String(profile.klass || '').slice(0, 24),
+    school: String(profile.school || '').slice(0, 40),
+    gradeKey: String(profile.gradeKey || '').slice(0, 12),
+    gradeLabel: String(profile.gradeLabel || '').slice(0, 16),
     isBot: false,
     points: blankPoints(),
     subjectPoints: {},
@@ -257,6 +260,7 @@ function load() {
       state.participants.set(p.id, {
         id: p.id, token: p.token, pin: p.pin || '', classId: p.classId || '',
         name: p.name, emoji: p.emoji, klass: p.klass,
+        school: p.school || '', gradeKey: p.gradeKey || '', gradeLabel: p.gradeLabel || '',
         isBot: false,
         points: Object.assign(blankPoints(), p.points || {}),
         subjectPoints: p.subjectPoints || {},
@@ -283,6 +287,9 @@ function publicEntry(p) {
     name: p.name,
     emoji: p.emoji,
     klass: p.klass,
+    school: p.school || '',
+    gradeKey: p.gradeKey || '',
+    gradeLabel: p.gradeLabel || '',
     isBot: !!p.isBot,
     points: { today: p.points.today, week: p.points.week, total: p.points.total },
     subjectPoints: p.subjectPoints,
@@ -465,6 +472,9 @@ async function handleApi(req, res, url) {
       if (body.name) p.name = String(body.name).slice(0, 16);
       if (body.emoji) p.emoji = String(body.emoji).slice(0, 4);
       if (body.klass) p.klass = String(body.klass).slice(0, 24);
+      if (body.school !== undefined) p.school = String(body.school).slice(0, 40);
+      if (body.gradeKey !== undefined) p.gradeKey = String(body.gradeKey).slice(0, 12);
+      if (body.gradeLabel !== undefined) p.gradeLabel = String(body.gradeLabel).slice(0, 16);
     } else {
       if (state.participants.size >= MAX_PARTICIPANTS) {
         const oldest = Array.from(state.participants.values())
@@ -473,6 +483,9 @@ async function handleApi(req, res, url) {
         if (oldest) state.participants.delete(oldest.id);
       }
       p = createParticipant({ name: body.name, emoji: body.emoji, klass: body.klass });
+      p.school = String(body.school || '').slice(0, 40);
+      p.gradeKey = String(body.gradeKey || '').slice(0, 12);
+      p.gradeLabel = String(body.gradeLabel || '').slice(0, 16);
       // 首次接入可用本机历史进度做初始化（带上限，避免被刷）
       const seed = body.seed || {};
       if (seed.points) {
@@ -642,6 +655,9 @@ async function handleApi(req, res, url) {
     if (body.name) p.name = String(body.name).slice(0, 16);
     if (body.emoji) p.emoji = String(body.emoji).slice(0, 4);
     if (body.klass) p.klass = String(body.klass).slice(0, 24);
+    if (body.school !== undefined) p.school = String(body.school).slice(0, 40);
+    if (body.gradeKey !== undefined) p.gradeKey = String(body.gradeKey).slice(0, 12);
+    if (body.gradeLabel !== undefined) p.gradeLabel = String(body.gradeLabel).slice(0, 16);
     const clsOfP = state.classes.get(p.classId);
     if (clsOfP) p.klass = clsOfP.name;   // 班级名称以班级记录为准，防止改名字绕过隔离
     p.lastSeen = Date.now();
