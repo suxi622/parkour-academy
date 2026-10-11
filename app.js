@@ -71,7 +71,8 @@
       inventory: ['partner-cat'],
       equipped: { partner: 'partner-cat', theme: 'theme-star' },
       partners: {},           // { 'partner-dino': { level: 2 } } 伙伴等级（金币升级）
-      home: { placed: [] },   // 家园摆件：[{ id, slot }]
+      home: { placed: [], bag: [] },   // 展示架：[{ id, slot }]；背包：[{ id, qty }]
+      gear: { head: '', feet: '', charm: '', pack: '' },   // 跑酷装备（头盔 / 跑鞋 / 护符 / 背包）
       chat: {},               // { 'partner-cat': [{ who, text, at }] } 与伙伴的聊天记录
       aiConfig: null,         // 可选：接入自己的大模型 { endpoint, key, model }
       history: [],            // 最近闯关记录
@@ -1036,6 +1037,7 @@
       partnerLevel: partnerLevel(equippedPartnerId()),
       coinBonusPct: partnerBonus(equippedPartnerId()).coin,
       scoreBonusPct: partnerBonus(equippedPartnerId()).score,
+      gear: gearMods(),
       seed: Date.now() % 100000,
       onEvent: function (ev) {
         if (ev.type === 'notice') toast(ev.message);
@@ -1160,6 +1162,13 @@
     { id: 'deco-fish', type: 'deco', name: '小水族箱', art: '🐠', price: 420, rarity: 'epic', desc: '小鱼会吐泡泡' },
     { id: 'deco-game', type: 'deco', name: '游戏机', art: '🎮', price: 520, rarity: 'epic', desc: '休息一下再学习' },
     { id: 'deco-window', type: 'deco', name: '星空落地窗', art: '🪟', price: 660, rarity: 'legend', desc: '抬头就能看见星星' },
+    /* 跑酷装备：买了带属性，可装备到对应部位 */
+    { id: 'gear-helmet', type: 'gear', slot: 'head', name: '安全头盔', art: '🪖', price: 400, rarity: 'rare', desc: '答错时免疫 1 次扣血', mods: { safeWrong: 1 } },
+    { id: 'gear-shoes', type: 'gear', slot: 'feet', name: '疾风跑鞋', art: '👟', price: 350, rarity: 'rare', desc: '起跑速度 +15%，跳得更高', mods: { speedPct: 15, jumpPct: 12 } },
+    { id: 'gear-shield', type: 'gear', slot: 'charm', name: '能量护盾', art: '🛡️', price: 600, rarity: 'epic', desc: '每关生命 +1', mods: { extraLives: 1 } },
+    { id: 'gear-magnet', type: 'gear', slot: 'charm', name: '金币磁铁', art: '🧲', price: 500, rarity: 'epic', desc: '答对金币 +20%', mods: { coinPct: 20 } },
+    { id: 'gear-pack', type: 'gear', slot: 'pack', name: '学霸背包', art: '🎒', price: 450, rarity: 'rare', desc: '答对得分 +15%', mods: { scorePct: 15 } },
+    { id: 'gear-crown', type: 'gear', slot: 'head', name: '王者皇冠', art: '👑', price: 1200, rarity: 'legend', desc: '生命 +1 · 金币 +15% · 得分 +15%', mods: { extraLives: 1, coinPct: 15, scorePct: 15 } },
     { id: 'badge-math', type: 'badge', name: '数学小达人', art: '📐', price: 200, rarity: 'rare', desc: '数学连对 10 题解锁' },
     { id: 'badge-storm', type: 'badge', name: '连击风暴', art: '⚡', price: 400, rarity: 'epic', desc: '单局连击 ×8 解锁' },
     { id: 'badge-champion', type: 'badge', name: '榜单冠军', art: '🏆', price: 800, rarity: 'legend', desc: '登顶实时榜单解锁' },
@@ -1198,6 +1207,73 @@
   }
   function homeDecoSlots() { return 8; }
   function placedDeco() { return (S.home && S.home.placed) || []; }
+
+  /* ---------------- 背包 / 展示架 ---------------- */
+  function bagList() {
+    S.home = S.home || { placed: [], bag: [] };
+    if (!S.home.bag) S.home.bag = [];
+    return S.home.bag;
+  }
+  function bagAdd(id, n) {
+    var bag = bagList();
+    var it = bag.filter(function (b) { return b.id === id; })[0];
+    if (it) it.qty += (n || 1);
+    else bag.push({ id: id, qty: n || 1 });
+  }
+  function bagTake(id) {
+    var bag = bagList();
+    var it = bag.filter(function (b) { return b.id === id; })[0];
+    if (!it || it.qty < 1) return false;
+    it.qty -= 1;
+    if (it.qty <= 0) S.home.bag = bag.filter(function (b) { return b.id !== id; });
+    return true;
+  }
+  function bagQty(id) {
+    var it = bagList().filter(function (b) { return b.id === id; })[0];
+    return it ? it.qty : 0;
+  }
+  function freeSlot() {
+    var used = placedDeco().map(function (p) { return p.slot; });
+    for (var i = 0; i < homeDecoSlots(); i++) if (used.indexOf(i) === -1) return i;
+    return -1;
+  }
+
+  /* ---------------- 跑酷装备 ---------------- */
+  var GEAR_SLOTS = [
+    { key: 'head', name: '头部', emoji: '🪖' },
+    { key: 'feet', name: '脚部', emoji: '👟' },
+    { key: 'charm', name: '护符', emoji: '🛡️' },
+    { key: 'pack', name: '背包', emoji: '🎒' }
+  ];
+  function gearById(id) { return SHOP.filter(function (x) { return x.id === id; })[0] || null; }
+  function ownedGear() { return SHOP.filter(function (it) { return it.type === 'gear' && S.inventory.indexOf(it.id) !== -1; }); }
+  function equippedGear() {
+    S.gear = S.gear || {};
+    return GEAR_SLOTS.map(function (s) { return gearById(S.gear[s.key]); }).filter(Boolean);
+  }
+  /** 汇总已装备道具的属性，交给跑酷游戏 */
+  function gearMods() {
+    var m = { speedPct: 0, jumpPct: 0, coinPct: 0, scorePct: 0, extraLives: 0, safeWrong: 0, names: [] };
+    equippedGear().forEach(function (g) {
+      var md = g.mods || {};
+      ['speedPct', 'jumpPct', 'coinPct', 'scorePct', 'extraLives', 'safeWrong'].forEach(function (k) {
+        m[k] += Number(md[k]) || 0;
+      });
+      m.names.push(g.art + ' ' + g.name);
+    });
+    return m;
+  }
+  function gearAttrText(g) {
+    var md = g.mods || {};
+    var out = [];
+    if (md.safeWrong) out.push('答错免疫 ' + md.safeWrong + ' 次');
+    if (md.extraLives) out.push('生命 +' + md.extraLives);
+    if (md.speedPct) out.push('速度 +' + md.speedPct + '%');
+    if (md.jumpPct) out.push('跳跃 +' + md.jumpPct + '%');
+    if (md.coinPct) out.push('金币 +' + md.coinPct + '%');
+    if (md.scorePct) out.push('得分 +' + md.scorePct + '%');
+    return out.join(' · ') || g.desc;
+  }
 
   var RARITY_CN = { common: '普通', rare: '稀有', epic: '史诗', legend: '传说' };
   function decoById(id) { return SHOP.filter(function (x) { return x.id === id; })[0] || null; }
@@ -1244,7 +1320,7 @@
       var def = item ? decoById(item.id) : null;
       slots.push('<div class="home-slot' + (def ? ' filled' : '') + '">' +
         (def ? '<span class="home-deco" title="' + esc(def.name) + '">' + def.art + '</span>' +
-          '<button class="home-slot-x" data-action="remove-deco" data-slot="' + i + '" title="收起">×</button>'
+          '<button class="home-slot-x" data-action="pickup-deco" data-slot="' + i + '" title="收回背包">×</button>'
           : '<span class="home-slot-hint">空位</span>') +
       '</div>');
     }
@@ -1260,7 +1336,64 @@
           '<div class="home-partner-say" id="partnerSay">“' + esc(pm.name) + '在等你一起去跑酷～”</div>' +
         '</div>' +
       '</div>' +
-      '<p class="muted" style="font-size:12.5px;margin-top:10px">提示：买下摆件会自动放进空位；点摆件右上角的 × 可以收起，再买一件就能换位置。</p>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:10px">提示：购买的摆件会先放进<b>背包</b>，你可以随时决定摆到展示架上（点右上角 × 收回背包）。</p>' +
+    '</section>';
+
+    // 背包：买了先揣着，想摆再摆
+    var bag = bagList().filter(function (b) { return b.qty > 0; });
+    html += '<section class="card" style="margin-top:18px">' +
+      '<div class="card-title"><span class="emoji">🎒</span>我的背包 <span class="card-sub">共 ' + bag.reduce(function (n, b) { return n + b.qty; }, 0) + ' 件</span>' +
+        '<span class="grow"></span>' +
+        '<span class="card-sub">展示架 ' + placed.length + '/' + homeDecoSlots() + '</span></div>' +
+      (bag.length
+        ? '<div class="bag-grid">' + bag.map(function (b) {
+            var it = decoById(b.id) || gearById(b.id);
+            if (!it) return '';
+            var canPlace = it.type === 'deco';
+            var full = placed.length >= homeDecoSlots();
+            return '<div class="bag-item">' +
+              '<div class="bag-art">' + it.art + '</div>' +
+              '<div class="grow"><b>' + esc(it.name) + '</b><div class="lb-sub">×' + b.qty + ' · ' + (it.type === 'deco' ? '家园摆件' : '跑酷道具') + '</div></div>' +
+              (canPlace
+                ? '<button class="btn btn-accent btn-sm" data-action="place-deco" data-id="' + it.id + '"' + (full ? ' disabled' : '') + '>' + (full ? '展示架已满' : '放到展示架') + '</button>'
+                : '<button class="btn btn-secondary btn-sm" data-action="equip-gear" data-id="' + it.id + '">去装备</button>') +
+            '</div>';
+          }).join('') + '</div>'
+        : '<div class="empty"><span class="em">🎒</span>背包是空的。在下面的商店买点摆件或装备吧～</div>') +
+    '</section>';
+
+    // 跑酷装备（带属性）
+    var mods = gearMods();
+    html += '<section class="card" style="margin-top:18px">' +
+      '<div class="card-title"><span class="emoji">🪖</span>跑酷装备 <span class="card-sub">装备后本关立即生效</span></div>' +
+      '<div class="gear-slots">' + GEAR_SLOTS.map(function (s) {
+        var g = gearById((S.gear || {})[s.key]);
+        return '<div class="gear-slot' + (g ? ' on' : '') + '">' +
+          '<div class="gear-slot-label">' + s.emoji + ' ' + s.name + '</div>' +
+          (g
+            ? '<div class="gear-art">' + g.art + '</div><b>' + esc(g.name) + '</b>' +
+              '<div class="lb-sub">' + esc(gearAttrText(g)) + '</div>' +
+              '<button class="btn btn-ghost btn-sm" data-action="unequip-gear" data-slot="' + s.key + '">卸下</button>'
+            : '<div class="gear-art empty">＋</div><div class="lb-sub">未装备</div>') +
+        '</div>';
+      }).join('') + '</div>' +
+      '<div class="analysis" style="margin-top:12px">当前属性加成：' +
+        (mods.names.length
+          ? ('生命 +' + mods.extraLives + ' · 速度 +' + mods.speedPct + '% · 跳跃 +' + mods.jumpPct + '% · 金币 +' + mods.coinPct + '% · 得分 +' + mods.scorePct + '%' + (mods.safeWrong ? ' · 答错免疫 ' + mods.safeWrong + ' 次' : ''))
+          : '还没有装备任何道具（下面买一件装备上就能生效）') +
+        '<div class="lb-sub" style="margin-top:4px">已装备：' + (mods.names.length ? esc(mods.names.join('、')) : '无') + '</div></div>' +
+      (ownedGear().length
+        ? '<div class="bag-grid" style="margin-top:12px">' + ownedGear().map(function (g) {
+            var on = (S.gear || {})[g.slot] === g.id;
+            return '<div class="bag-item">' +
+              '<div class="bag-art">' + g.art + '</div>' +
+              '<div class="grow"><b>' + esc(g.name) + '</b><div class="lb-sub">' + esc(gearAttrText(g)) + '</div></div>' +
+              (on
+                ? '<button class="btn btn-ghost btn-sm" disabled>已装备</button>'
+                : '<button class="btn btn-accent btn-sm" data-action="equip-gear" data-id="' + g.id + '">装备</button>') +
+            '</div>';
+          }).join('') + '</div>'
+        : '') +
     '</section>';
 
     // 伙伴成长
@@ -1315,21 +1448,36 @@
 
     // 摆件商店
     html += '<section class="card" style="margin-top:18px">' +
-      '<div class="card-title"><span class="emoji">🧸</span>家园摆件 <span class="card-sub">买下即自动摆放</span></div>' +
+      '<div class="card-title"><span class="emoji">🧸</span>家园摆件 <span class="card-sub">买下先进背包，可自行决定摆放位置</span></div>' +
       '<div class="grid grid-4">' +
         SHOP.filter(function (it) { return it.type === 'deco'; }).map(function (it) {
           var count = placed.filter(function (p) { return p.id === it.id; }).length;
-          var full = placed.length >= homeDecoSlots();
           return '<div class="shop-item">' +
             '<div class="shop-art">' + it.art + '</div>' +
-            '<div><b>' + it.name + '</b><div class="lb-sub" style="margin-top:4px">' + it.desc + (count ? ' · 已摆 ' + count + ' 件' : '') + '</div></div>' +
+            '<div><b>' + it.name + '</b><div class="lb-sub" style="margin-top:4px">' + it.desc +
+              (count ? ' · 展示架 ' + count + ' 件' : '') + (bagQty(it.id) ? ' · 背包 ' + bagQty(it.id) + ' 件' : '') + '</div></div>' +
             '<span class="rarity ' + it.rarity + '">' + RARITY_CN[it.rarity] + '</span>' +
-            '<button class="btn btn-secondary btn-sm btn-block" data-action="buy-deco" data-id="' + it.id + '"' + (full ? ' disabled' : '') + '>' +
-              (full ? '位置已满' : '🪙 ' + it.price) + '</button>' +
+            '<button class="btn btn-secondary btn-sm btn-block" data-action="buy-deco" data-id="' + it.id + '">🪙 ' + it.price + ' 买入背包</button>' +
           '</div>';
         }).join('') +
       '</div>' +
     '</section>';
+
+    // 装备商店（买下后在「跑酷装备」里装上即可生效）
+    var unownedGear = SHOP.filter(function (it) { return it.type === 'gear' && S.inventory.indexOf(it.id) === -1; });
+    if (unownedGear.length) {
+      html += '<section class="card" style="margin-top:18px">' +
+        '<div class="card-title"><span class="emoji">🛒</span>装备商店 <span class="card-sub">跑酷时立刻生效</span></div>' +
+        '<div class="grid grid-4">' + unownedGear.map(function (it) {
+          return '<div class="shop-item">' +
+            '<div class="shop-art">' + it.art + '</div>' +
+            '<div><b>' + it.name + '</b><div class="lb-sub" style="margin-top:4px">' + esc(gearAttrText(it)) + '</div></div>' +
+            '<span class="rarity ' + RARITY_CN[it.rarity] + '">' + RARITY_CN[it.rarity] + '</span>' +
+            '<button class="btn btn-secondary btn-sm btn-block" data-action="buy" data-id="' + it.id + '">🪙 ' + it.price + '</button>' +
+          '</div>';
+        }).join('') + '</div>' +
+      '</section>';
+    }
 
     html += shopSection('badge', '徽章', '🏅');
     html += shopSection('theme', '赛道主题', '🌌');
@@ -2690,26 +2838,59 @@
         var dId = actionEl.getAttribute('data-id');
         var deco = decoById(dId);
         if (!deco) break;
-        if (placedDeco().length >= homeDecoSlots()) { toast('房间位置满了，先收起一件吧', 'bad'); break; }
         if (S.coins < deco.price) { toast('金币不足，还差 ' + (deco.price - S.coins) + ' 金币', 'bad'); break; }
         S.coins -= deco.price;
-        var usedSlots = placedDeco().map(function (p) { return p.slot; });
-        var freeSlot = 0;
-        while (usedSlots.indexOf(freeSlot) !== -1) freeSlot++;
-        S.home = S.home || { placed: [] };
-        S.home.placed.push({ id: dId, slot: freeSlot });
+        bagAdd(deco.id, 1);
         save();
-        confetti(40);
-        toast('已把「' + deco.name + '」摆进家园', 'ok');
+        confetti(30);
+        toast('「' + deco.name + '」已放进背包，去背包点「放到展示架」即可摆放', 'ok');
         render();
         break;
       }
+      case 'place-deco': {
+        var placeId = actionEl.getAttribute('data-id');
+        var placeItem = decoById(placeId);
+        var slot = freeSlot();
+        if (slot < 0) { toast('展示架满了，先收回一件再放吧', 'bad'); break; }
+        if (!bagTake(placeId)) { toast('背包里已经没有这件摆件了', 'bad'); break; }
+        S.home = S.home || { placed: [], bag: [] };
+        S.home.placed.push({ id: placeId, slot: slot });
+        save();
+        confetti(30);
+        toast('已把「' + (placeItem ? placeItem.name : '摆件') + '」摆到展示架', 'ok');
+        render();
+        break;
+      }
+      case 'pickup-deco':
       case 'remove-deco': {
         var slotNo = parseInt(actionEl.getAttribute('data-slot'), 10);
-        S.home = S.home || { placed: [] };
+        var placed = placedDeco().filter(function (p) { return p.slot === slotNo; })[0];
+        S.home = S.home || { placed: [], bag: [] };
         S.home.placed = placedDeco().filter(function (p) { return p.slot !== slotNo; });
+        if (placed) bagAdd(placed.id, 1);
         save();
-        toast('已收起');
+        toast(placed ? ('已把「' + ((decoById(placed.id) || {}).name || '摆件') + '」收回背包') : '已收起');
+        render();
+        break;
+      }
+      case 'equip-gear': {
+        var gearId = actionEl.getAttribute('data-id');
+        var gearItem = gearById(gearId);
+        if (!gearItem || S.inventory.indexOf(gearId) === -1) { toast('还没有这件装备，先去装备商店买一件吧', 'bad'); break; }
+        S.gear = S.gear || {};
+        S.gear[gearItem.slot] = gearItem.id;
+        save();
+        toast('已装备「' + gearItem.name + '」：' + gearAttrText(gearItem), 'ok');
+        render();
+        break;
+      }
+      case 'unequip-gear': {
+        var gearSlot = actionEl.getAttribute('data-slot');
+        S.gear = S.gear || {};
+        var oldGear = gearById(S.gear[gearSlot]);
+        S.gear[gearSlot] = '';
+        save();
+        toast(oldGear ? ('已卸下「' + oldGear.name + '」') : '已卸下');
         render();
         break;
       }
