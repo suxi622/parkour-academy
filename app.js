@@ -57,11 +57,12 @@
   /* ============================================================
    * 状态
    * ============================================================ */
-  var STORAGE_KEY = 'pk-academy-v2';
+  var STORAGE_KEY = 'pk-academy-v3';   // v3：清掉旧版本里的演示班级 / 测试账号与初始积分
 
   function defaultState() {
     return {
-      user: { name: '小跑者', emoji: '🐱', klass: '三年级 1 班', role: 'student' },
+      user: { name: '', emoji: '🐱', klass: '', role: 'student' },
+      loggedIn: false,        // 是否已经登录（未登录只显示登录页）
       coins: 320,
       stats: {},              // { [subjectKey]: { answered, correct, points } }
       wrongIds: [],
@@ -71,11 +72,7 @@
       history: [],            // 最近闯关记录
       daily: {},              // { 'YYYY-MM-DD': points }
       customQuestions: [],    // 教师自定义题目
-      classes: [
-        { id: 'c1', name: '三年级 1 班', code: '3182', teacher: '王老师', students: 14, avg: 86, rate: 92, createdAt: Date.now() - 6 * 864e5 },
-        { id: 'c2', name: '三年级 2 班', code: '4725', teacher: '王老师', students: 12, avg: 79, rate: 84, createdAt: Date.now() - 5 * 864e5 },
-        { id: 'c3', name: '四年级 1 班', code: '9061', teacher: '李老师', students: 11, avg: 74, rate: 78, createdAt: Date.now() - 4 * 864e5 }
-      ],
+      classes: [],            // 不再内置任何班级 / 测试账号，全部由老师创建
       homework: [],           // 教师发布的作业：[{ id, title, classId, className, questionIds, createdAt, due, status, submissions }]
       joinedClassIds: [],     // 学生已加入的班级
       seenGuide: false,       // 是否看过使用解说
@@ -115,8 +112,8 @@
       emoji: S.user.emoji,
       klass: S.user.klass,
       isMe: true,
-      points: { today: 240, week: 880, total: 3260 },
-      subjectPoints: { math: 980, chinese: 620, english: 540 },
+      points: { today: 0, week: 0, total: 0 },
+      subjectPoints: {},
       correct: 0,
       total: 0,
       streak: 0
@@ -139,11 +136,10 @@
   leaderboard.me.name = S.user.name;
   leaderboard.me.emoji = S.user.emoji;
   leaderboard.me.klass = S.user.klass;
-  if (!leaderboard.me.points || !leaderboard.me.points.total) {
-    leaderboard.me.points = { today: 240, week: 880, total: 3260 };
-  }
+  if (!leaderboard.me.points) leaderboard.me.points = { today: 0, week: 0, total: 0 };
 
   var ui = {
+    loginRole: '',
     lbRange: 'today',
     lbSubject: 'all',
     subject: 'math',
@@ -214,6 +210,25 @@
     var ids = S.joinedClassIds || [];
     if (!ids.length) return null;
     return classById(ids[ids.length - 1]);
+  }
+
+  function joinClassById(cls) {
+    if (!cls) return false;
+    if ((S.joinedClassIds || []).indexOf(cls.id) === -1) S.joinedClassIds = (S.joinedClassIds || []).concat(cls.id);
+    S.user.klass = cls.name;
+    leaderboard.me.klass = cls.name;
+    if (leaderboard.updateProfile) leaderboard.updateProfile({ name: S.user.name, emoji: S.user.emoji, klass: cls.name });
+    return true;
+  }
+
+  function enterApp(role, name) {
+    S.user.role = role;
+    S.user.name = name || S.user.name || (role === 'teacher' ? '老师' : '同学');
+    S.loggedIn = true;
+    leaderboard.me.name = S.user.name;
+    leaderboard.me.emoji = S.user.emoji;
+    if (leaderboard.updateProfile) leaderboard.updateProfile({ name: S.user.name, emoji: S.user.emoji, klass: S.user.klass });
+    save();
   }
 
   function homeworkById(id) {
@@ -306,6 +321,72 @@
       '<div class="prog"><i style="width:' + rate + '%"></i></div>' +
       '<div class="lb-sub">已答 ' + st.answered + ' 题</div>' +
     '</button>';
+  }
+
+  /* ============================================================
+   * 登录页（学生 / 老师共用一个入口，切换简洁）
+   * ============================================================ */
+  function viewLogin() {
+    var role = ui.loginRole || S.user.role || 'student';
+    var isStu = role !== 'teacher';
+    var cls = myClass();
+    var steps = [
+      ['🧑‍🎓', '学生', '填昵称即可进入，有班级码就填、没有也能先体验'],
+      ['🧑‍🏫', '老师', '不用班级码，进入后创建班级并发放 4 位班级码'],
+      ['🏃', '跑酷答题', '答对清障加速，答错自动进错题本'],
+      ['🏆', '实时榜单', '多台设备同屏竞技，积分名次实时更新']
+    ];
+    return '<div class="login-wrap fade-in">' +
+      '<div class="login-card">' +
+        '<div class="login-brand">' +
+          '<div class="login-logo">🐱</div>' +
+          '<div><div class="login-title">汤姆猫跑酷学堂</div>' +
+          '<div class="login-sub">边跑边学 · 实时积分榜 · 游戏化课堂</div></div>' +
+        '</div>' +
+
+        '<div class="role-switch" role="tablist">' +
+          '<button data-action="login-role" data-role="student" class="' + (isStu ? 'on' : '') + '">🧑‍🎓 我是学生</button>' +
+          '<button data-action="login-role" data-role="teacher" class="' + (!isStu ? 'on' : '') + '">🧑‍🏫 我是老师</button>' +
+        '</div>' +
+
+        (isStu
+          ? '<div class="login-form">' +
+              '<div class="form-field"><label>你的昵称</label>' +
+                '<input class="input" id="lgName" maxlength="12" placeholder="例如：小明" value="' + esc(S.user.name || '') + '"></div>' +
+              '<div class="form-field"><label>班级码 <span class="opt-tag">选填</span></label>' +
+                '<input class="input code-input" id="lgCode" inputmode="numeric" maxlength="4" placeholder="老师给的 4 位数字" value="' + esc(cls ? cls.code : '') + '"></div>' +
+              '<div id="lgMsg" class="login-msg"></div>' +
+              '<button class="btn btn-primary btn-lg btn-block" data-action="login-enter" data-role="student">🚀 进入学生端</button>' +
+              '<button class="btn btn-ghost btn-block" data-action="login-enter" data-role="student" data-skip="1">暂时没有班级码，先进入体验</button>' +
+              '<p class="login-tip">' +
+                (S.classes.length
+                  ? '填写班级码会加入对应班级，作业和班级排名都会算进去。'
+                  : '老师还没有创建班级，你可以直接进入先体验跑酷闯关。') +
+              '</p>' +
+            '</div>'
+          : '<div class="login-form">' +
+              '<div class="form-field"><label>你的称呼</label>' +
+                '<input class="input" id="lgName" maxlength="12" placeholder="例如：李老师" value="' + esc(S.user.name || '') + '"></div>' +
+              '<div id="lgMsg" class="login-msg"></div>' +
+              '<button class="btn btn-teacher btn-lg btn-block" data-action="login-enter" data-role="teacher">🧑‍🏫 进入教师端</button>' +
+              '<p class="login-tip">老师不需要班级码。进入后到「班级学情」创建班级，会立刻弹出班级码发给学生。</p>' +
+            '</div>') +
+      '</div>' +
+
+      '<div class="login-side">' +
+        '<h2 class="login-side-title">30 秒上手</h2>' +
+        '<div class="login-steps">' +
+          steps.map(function (s, i) {
+            return '<div class="login-step">' +
+              '<div class="login-step-num">' + (i + 1) + '</div>' +
+              '<div class="login-step-emoji">' + s[0] + '</div>' +
+              '<div><b>' + s[1] + '</b><p>' + s[2] + '</p></div>' +
+            '</div>';
+          }).join('') +
+        '</div>' +
+        '<button class="btn btn-ghost btn-block" data-action="open-guide" style="margin-top:14px">📖 查看完整使用解说</button>' +
+      '</div>' +
+    '</div>';
   }
 
   /* ============================================================
@@ -974,7 +1055,14 @@
       '</div>' +
     '</section>';
 
-    html += '<section class="grid grid-3">' + S.classes.map(function (c) {
+    html += S.classes.length === 0
+      ? '<section class="card center" style="padding:34px 20px">' +
+          '<div style="font-size:38px">🏫</div>' +
+          '<h3 style="margin-top:10px;font-size:17px;font-weight:900">还没有班级</h3>' +
+          '<p class="muted" style="font-size:13px;margin-top:6px">创建第一个班级后，会立刻弹出 4 位班级码，发给学生即可加入。</p>' +
+          '<button class="btn btn-teacher" style="margin-top:16px" data-action="create-class">＋ 创建第一个班级</button>' +
+        '</section>'
+      : '<section class="grid grid-3">' + S.classes.map(function (c) {
       return '<div class="card">' +
         '<div class="row between"><b style="font-size:15px">' + esc(c.name) + '</b><span class="badge">班级码 ' + esc(c.code) + '</span></div>' +
         '<div class="row" style="gap:20px;margin-top:14px">' +
@@ -1252,7 +1340,10 @@
 
     if (currentGame) { currentGame.destroy(); currentGame = null; }
 
-    if (seg[0] === 'home') html = viewHome();
+    if (!S.loggedIn) html = viewLogin();
+    else if (seg[0] === 'login') html = viewLogin();
+    else if (seg[0] === 'home') html = viewHome();
+    else if (seg[0] === 'my') html = isTeacher() ? viewTeacher() : viewStudent();
     else if (seg[0] === 'student') {
       if (seg[1] === 'game') html = viewGame(seg);
       else if (seg[1] === 'wrong') html = viewWrong();
@@ -1278,13 +1369,17 @@
   }
 
   function updateNav(route) {
-    var key = route.segments[1] === 'garden' ? 'garden' : route.segments[0];
+    var seg = route.segments;
+    var key = seg[1] === 'garden' ? 'garden' : seg[0];
+    if (key === 'student' || key === 'teacher') key = 'my';   // 学生端 / 教师端共用一个「我的课堂」入口
+    if (!S.loggedIn) key = '';
     Array.prototype.forEach.call(document.querySelectorAll('.nav a'), function (a) {
       var target = a.getAttribute('data-nav');
-      a.classList.toggle('active', target === key || (key === 'home' && target === 'home'));
+      a.classList.toggle('active', target === key);
     });
     Array.prototype.forEach.call(document.querySelectorAll('.mobile-nav a'), function (a) {
-      a.classList.toggle('active', a.getAttribute('data-nav') === key);
+      var t = a.getAttribute('data-nav');
+      a.classList.toggle('active', t === key || (t === 'garden' && key === 'garden'));
     });
   }
 
@@ -1303,6 +1398,15 @@
       roleEl.textContent = isTeacher() ? '🧑‍🏫 老师' : '🧑‍🎓 学生';
       roleEl.classList.toggle('teacher', isTeacher());
     }
+    document.body.classList.toggle('auth', !!S.loggedIn);
+    var seg = $('#roleSeg');
+    if (seg) {
+      Array.prototype.forEach.call(seg.querySelectorAll('button'), function (b) {
+        b.classList.toggle('on', b.getAttribute('data-role') === (isTeacher() ? 'teacher' : 'student'));
+      });
+    }
+    var outBtn = $('#logoutBtn');
+    if (outBtn) outBtn.style.display = S.loggedIn ? '' : 'none';
     updateLiveBadge();
   }
 
@@ -1464,15 +1568,72 @@
         ui.teacherTab = actionEl.getAttribute('data-key');
         render();
         break;
-      case 'toggle-role': {
-        S.user.role = isTeacher() ? 'student' : 'teacher';
-        save();
+      case 'login-role':
+        ui.loginRole = actionEl.getAttribute('data-role') || 'student';
         render();
-        toast(isTeacher()
-          ? '已切换为「老师」：可在教师端创建班级、发布作业'
-          : '已切换为「学生」：可加入班级、跑酷闯关', 'ok');
+        break;
+      case 'login-enter': {
+        var wantRole = actionEl.getAttribute('data-role') || ui.loginRole || 'student';
+        var skipCode = actionEl.getAttribute('data-skip') === '1';
+        var nameInput = $('#lgName');
+        var msgBox = $('#lgMsg');
+        var loginName = nameInput ? nameInput.value.trim() : '';
+        if (!loginName) {
+          if (msgBox) msgBox.innerHTML = '<span class="bad">请先填写昵称，再进入</span>';
+          if (nameInput) nameInput.focus();
+          break;
+        }
+        if (wantRole === 'teacher') {
+          S.user.klass = S.user.klass || '教师';
+          enterApp('teacher', loginName);
+          ui.loginRole = 'teacher';
+          ui.teacherTab = 'classes';
+          toast('欢迎，' + loginName + ' 老师', 'ok');
+          location.hash = '#/teacher';
+          render();
+          maybeFirstGuide();
+          break;
+        }
+        var codeInput = $('#lgCode');
+        var code = codeInput ? String(codeInput.value || '').replace(/\s/g, '') : '';
+        if (code && !skipCode) {
+          if (!/^\d{4}$/.test(code)) {
+            if (msgBox) msgBox.innerHTML = '<span class="bad">班级码是 4 位数字，请检查一下</span>';
+            break;
+          }
+          var targetClass = classByCode(code);
+          if (!targetClass) {
+            if (msgBox) msgBox.innerHTML = '<span class="bad">没有找到这个班级码，可以点「先进入体验」，或找老师核对</span>';
+            break;
+          }
+          joinClassById(targetClass);
+        }
+        enterApp('student', loginName);
+        ui.loginRole = 'student';
+        toast('欢迎，' + loginName + (myClass() ? '，已加入 ' + myClass().name : ''), 'ok');
+        location.hash = '#/student';
+        render();
+        maybeFirstGuide();
         break;
       }
+      case 'set-role': {
+        var nextRole = actionEl.getAttribute('data-role') === 'teacher' ? 'teacher' : 'student';
+        if (!S.loggedIn) { ui.loginRole = nextRole; location.hash = '#/login'; render(); break; }
+        S.user.role = nextRole;
+        save();
+        toast(nextRole === 'teacher' ? '已切换到老师视角' : '已切换到学生视角');
+        location.hash = nextRole === 'teacher' ? '#/teacher' : '#/student';
+        render();
+        break;
+      }
+      case 'logout':
+        S.loggedIn = false;
+        ui.loginRole = S.user.role;
+        save();
+        location.hash = '#/login';
+        render();
+        toast('已退出，可切换账号重新进入');
+        break;
       case 'open-guide':
         openGuide();
         break;
@@ -1676,10 +1837,7 @@
       if (!/^\d{4}$/.test(code)) { msg.innerHTML = '<span style="color:#c62c27">请输入 4 位数字班级码</span>'; return; }
       var cls = classByCode(code);
       if (!cls) { msg.innerHTML = '<span style="color:#c62c27">没有找到这个班级，请和老师核对班级码</span>'; return; }
-      if ((S.joinedClassIds || []).indexOf(cls.id) === -1) S.joinedClassIds = (S.joinedClassIds || []).concat(cls.id);
-      S.user.klass = cls.name;
-      leaderboard.me.klass = cls.name;
-      if (leaderboard.updateProfile) leaderboard.updateProfile({ name: S.user.name, emoji: S.user.emoji, klass: cls.name });
+      joinClassById(cls);
       save();
       wrap.remove();
       toast('已加入「' + cls.name + '」', 'ok');
@@ -1733,6 +1891,14 @@
     wrap.querySelector('[data-close]').onclick = function () { wrap.remove(); };
     var never = wrap.querySelector('#gdNever');
     if (never) never.onchange = function () { S.seenGuide = never.checked; save(); };
+  }
+
+  /* 第一次登录后自动弹一次使用解说（勾选“下次不再弹出”后不再打扰） */
+  function maybeFirstGuide() {
+    if (S.seenGuide) return;
+    setTimeout(function () {
+      if (!S.seenGuide && S.loggedIn && !document.querySelector('.overlay.modal')) openGuide();
+    }, 700);
   }
 
   function openHomeworkForm() {
@@ -1983,13 +2149,20 @@
     render();
   });
 
-  if (!location.hash) location.hash = '#/home';
-  else render();
+  if (!S.loggedIn) {
+    // 未登录：只显示登录页，其余入口全部拦住
+    if (location.hash !== '#/login') location.hash = '#/login';
+    render();
+  } else if (!location.hash) {
+    location.hash = '#/home';
+  } else {
+    render();
+  }
 
-  // 首次访问自动弹出「使用解说」（用户勾选“不再提示”后不再自动弹出）
-  if (!S.seenGuide) {
+  // 登录后首次进入自动弹出「使用解说」（勾选“下次不再弹出”后不再自动弹）
+  if (!S.seenGuide && S.loggedIn) {
     setTimeout(function () {
-      if (!S.seenGuide && !document.querySelector('.overlay')) openGuide();
+      if (!S.seenGuide && S.loggedIn && !document.querySelector('.overlay')) openGuide();
     }, 900);
   }
 
