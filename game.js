@@ -212,7 +212,12 @@
       overlay.innerHTML = html || '';
       overlay.style.display = html ? '' : 'none';
       overlay.style.pointerEvents = html ? '' : 'none';
+      state.overlayOpen = !!html;
+      forceDraw = true;              // 开 / 关浮层时补画一帧
     }
+
+    var forceDraw = true;
+    var resizeTimer = null;
 
     function resize() {
       var rect = shell.getBoundingClientRect();
@@ -227,7 +232,8 @@
         // 手机竖屏给更高一点的画面比例，跑酷视野更舒服
         cssH = Math.round(cssW * (isPhone ? 0.74 : 0.62));
       }
-      DPR = Math.min(2, window.devicePixelRatio || 1);
+      // 手机上限 1.5 倍，避免超高分辨率画布拖慢帧率
+      DPR = Math.min(isPhone ? 1.5 : 2, window.devicePixelRatio || 1);
       canvas.width = Math.round(cssW * DPR);
       canvas.height = Math.round(cssH * DPR);
       canvas.style.height = cssH + 'px';
@@ -237,6 +243,13 @@
       for (var i = 0; i < 64; i++) {
         stars.push({ x: Math.random() * W, y: Math.random() * H * 0.4, r: Math.random() * 1.5 + 0.35, s: 0.5 + Math.random() });
       }
+      forceDraw = true;
+    }
+
+    /** 手机上地址栏收起会连续触发 resize，这里做防抖，避免反复重建画布造成卡顿 */
+    function onResize() {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () { resizeTimer = null; resize(); }, 160);
     }
 
     /* ---------------- 投影：lane 0/1/2 → -1/0/1 ---------------- */
@@ -1753,12 +1766,17 @@
       var dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       update(dt);
-      draw();
-      raf = requestAnimationFrame(loop);
+      // 关卡介绍 / 答题卡 / 暂停 / 结算时画面是静止的，不必每帧重绘（手机上明显更省电更流畅）
+     raf = requestAnimationFrame(loop);
+      var animating = state.phase === 'playing' || state.phase === 'countdown';
+      if (animating || forceDraw) {
+        draw();
+        forceDraw = false;
+      }
     }
 
     resize();
-    window.addEventListener('resize', resize);
+    window.addEventListener('resize', onResize);
     if (pauseBtn) pauseBtn.onclick = function () { if (state.phase === 'paused') resume(); else pause(); };
     if (fullBtn) fullBtn.onclick = function () {
       try {
@@ -1774,7 +1792,8 @@
       destroy: function () {
         if (raf) cancelAnimationFrame(raf);
         document.removeEventListener('keydown', keyHandler);
-        window.removeEventListener('resize', resize);
+        window.removeEventListener('resize', onResize);
+        if (resizeTimer) clearTimeout(resizeTimer);
         if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
       },
       state: state,
