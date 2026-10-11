@@ -45,9 +45,13 @@ html, body {
   font-family: var(--font);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  overflow-x: hidden;          /* 防止窄屏被长内容顶出横向滚动 */
 }
 
-body { min-height: 100vh; }
+body { min-height: 100vh; min-height: 100dvh; }
+
+img, canvas, svg { max-width: 100%; }
+button, a, .opt, .pick-item { -webkit-tap-highlight-color: transparent; }
 
 a { color: inherit; text-decoration: none; }
 button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
@@ -941,6 +945,200 @@ body:not(.auth) .page { padding-top: 30px; }
   .home-slots { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .chat-list { height: 52vh; }
   .chat-bubble { max-width: 84%; }
+}
+
+/* ============================================================
+   手机端适配（增强版）
+   · 顶栏 / 底部导航 / 安全区 / 栅格 / 表格 / 表单 / 游戏 / 聊天
+   ============================================================ */
+.span-2 { grid-column: span 2; }
+
+/* 触屏设备取消 hover 位移，避免"点一下卡片跳一下" */
+@media (hover: none) {
+  .subject-tile:hover, .podium-item:hover { transform: none; }
+  .btn:hover, .opt:hover, .chat-chip:hover { transform: none; }
+}
+
+@media (max-width: 1024px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 900px) {
+  .page { padding: 22px 16px 100px; }
+  .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .student-top { grid-template-columns: minmax(0, 1fr); }
+  .home-slots { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .hero { padding: 40px 28px 36px; }
+}
+
+@media (max-width: 720px) {
+  /* ---------- 顶栏：更矮、可收缩、避开刘海 ---------- */
+  .topbar-inner {
+    height: auto; min-height: 54px; gap: 8px;
+    padding: calc(7px + env(safe-area-inset-top)) max(12px, env(safe-area-inset-left)) 7px max(12px, env(safe-area-inset-right));
+  }
+  .brand { font-size: 16px; gap: 8px; min-width: 0; }
+  .brand-mark { width: 32px; height: 32px; font-size: 17px; border-radius: 10px; }
+  .brand-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 44vw; }
+  .brand-sub { display: none; }
+  .nav { display: none; }
+
+  .topstats { gap: 6px; min-width: 0; }
+  .topstats .pill { padding: 6px 10px; font-size: 12px; }
+  .topstats .pill.points, .topstats .pill.gold { display: none; }   /* 分数 / 金币在页面里本来就有 */
+  #topLive { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
+  .avatar-chip { padding: 4px 10px 4px 4px; font-size: 12px; gap: 6px; }
+  .avatar { width: 26px; height: 26px; font-size: 14px; }
+
+  /* ---------- 页面 & 底部导航（含安全区） ---------- */
+  .page { padding: 16px 12px calc(86px + env(safe-area-inset-bottom)) 12px; max-width: 100%; }
+  .mobile-nav {
+    padding: 6px max(6px, env(safe-area-inset-left)) calc(6px + env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-right));
+  }
+  .mobile-nav a { font-size: 10.5px; padding: 6px 0; }
+  .mobile-nav a .em { font-size: 18px; }
+  .my-rank-bar { bottom: calc(74px + env(safe-area-inset-bottom)); left: 12px; right: 12px; padding: 11px 13px; }
+
+  /* ---------- 栅格 & 卡片 ---------- */
+  .grid { gap: 12px; }
+  .grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .grid-3, .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card { padding: 16px; border-radius: 16px; }
+  .card-title { font-size: 15px; }
+  .span-2 { grid-column: span 2; }
+
+  /* ---------- 首页 ---------- */
+  .hero { padding: 26px 18px 24px; border-radius: 22px; }
+  .hero-eyebrow { font-size: 11.5px; padding: 6px 11px; }
+  .hero p.lead { font-size: 15px; }
+  .hero-actions { gap: 10px; margin-top: 20px; }
+  .hero-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .hero-stats { gap: 16px; margin-top: 22px; }
+  .hero-stat b { font-size: 20px; }
+  .subject-marquee { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .subject-tile { min-height: 92px; padding: 13px 12px; }
+  .subject-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+  .feature-card { padding: 15px; }
+  .footer { padding: 18px 0 26px; font-size: 11.5px; }
+
+  /* ---------- 学生端 ---------- */
+  .student-top { gap: 14px; }
+  .profile-card { padding: 18px; border-radius: 20px; }
+  .profile-avatar { width: 54px; height: 54px; font-size: 26px; }
+  .profile-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .profile-stat b { font-size: 19px; }
+  .quick-link { padding: 13px; }
+  .hw-item { flex-wrap: wrap; gap: 9px; padding: 12px; }
+
+  /* ---------- 榜单 ---------- */
+  .podium { gap: 8px; }
+  .podium-item { padding: 12px 8px; }
+  .podium-avatar { width: 44px; height: 44px; font-size: 22px; }
+  .podium-item.first .podium-avatar { width: 52px; height: 52px; font-size: 26px; }
+  .podium-crown { font-size: 19px; }
+  .podium-name { font-size: 12.5px; }
+  .podium-score { font-size: 15px; }
+  .lb-row { padding: 10px; gap: 8px; }
+  .lb-avatar { width: 32px; height: 32px; font-size: 17px; }
+  .lb-name { font-size: 13px; }
+  .lb-score { font-size: 14px; }
+  /* 长昵称 / 长文案自动换行，不把卡片顶宽 */
+  .lb-row, .lb-person, .feed-item, .hw-item, .list-row, .pick-item { min-width: 0; }
+  .lb-name, .lb-sub, .feed-item .grow, .hw-item .grow, .list-row .grow { overflow-wrap: anywhere; }
+  .feed-item .grow { white-space: normal; }
+
+  /* ---------- 表格：横向滚动而不是把列挤扁 ---------- */
+  .table { font-size: 12.5px; min-width: 520px; }
+  .table th, .table td { padding: 9px 10px; }
+  .table th { position: sticky; top: 0; background: #f7fafd; z-index: 1; }
+
+  /* ---------- 选项卡 / 筛选：横向可滑 ---------- */
+  .filter-tabs {
+    display: flex; width: 100%; max-width: 100%; overflow-x: auto;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .filter-tabs::-webkit-scrollbar { display: none; }
+  .filter-tabs button { flex: 0 0 auto; white-space: nowrap; padding: 8px 12px; font-size: 13px; }
+
+  /* ---------- 表单：16px 防止 iOS 聚焦自动放大 ---------- */
+  .input, .select, .textarea, .fill-input, #chatInput { font-size: 16px; }
+  .btn { min-height: 42px; }
+  .btn-sm { min-height: 34px; padding: 6px 10px; }
+  .form-field label { font-size: 12px; }
+
+  /* ---------- 弹窗 ---------- */
+  .overlay { padding: 12px; }
+  .overlay-card { padding: 18px; border-radius: 18px; max-height: 88dvh; }
+  .modal-title { font-size: 17px; }
+  .picker-list { max-height: 40dvh; }
+  .code-value { font-size: 34px; letter-spacing: 0.2em; }
+  .code-input { font-size: 22px; }
+
+  /* ---------- 跑酷游戏 ---------- */
+  .game-shell { border-radius: 18px; }
+  .game-hud { padding: 10px; }
+  .hud-chip { font-size: 11.5px; padding: 5px 9px; gap: 4px; }
+  .hud-bar { width: 86%; height: 20px; margin-top: 8px; }
+  .hud-bar span { font-size: 10.5px; }
+  .game-topbar { top: 8px; right: 8px; gap: 6px; }
+  .game-topbar button { width: 36px; height: 36px; font-size: 15px; border-radius: 10px; }
+  .game-hud .hud-row:first-child { padding-right: 82px; }
+  .game-countdown { font-size: 64px; }
+  .combo-badge { font-size: 26px; }
+  .q-type-chip { font-size: 11px; }
+  .q-content { font-size: 17px; margin: 12px 0 14px; }
+  .opt { padding: 12px 13px; font-size: 14.5px; margin-bottom: 8px; border-radius: 12px; }
+  .opt .key { width: 25px; height: 25px; font-size: 12px; }
+  .fill-input { padding: 13px 14px; }
+  .verdict { font-size: 14px; }
+  .result-title { font-size: 22px; }
+  .result-grid { gap: 8px; margin: 14px 0; }
+  .result-cell { padding: 10px; }
+  .result-cell b { font-size: 19px; }
+  .rule-grid { grid-template-columns: minmax(0, 1fr); }
+  .rule-item { padding: 10px 11px; }
+  .ready-partner { font-size: 11.5px; }
+
+  /* ---------- 家园 / 伙伴 ---------- */
+  .home-room { padding: 14px; border-radius: 16px; }
+  .home-slots { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .home-deco { font-size: 25px; }
+  .home-partner-art { font-size: 54px; }
+  .home-partner-plate { font-size: 12px; padding: 5px 11px; }
+  .home-partner-say { font-size: 11.5px; }
+  .partner-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .partner-art { height: 64px; font-size: 34px; }
+
+  /* ---------- 伙伴聊天 ---------- */
+  .chat-page { max-width: 100%; }
+  .chat-avatar { width: 44px; height: 44px; font-size: 24px; }
+  .chat-list { height: min(56dvh, 460px); min-height: 240px; padding: 12px; gap: 10px; }
+  .chat-bubble { max-width: 86%; font-size: 13.5px; padding: 10px 12px; }
+  .chat-chips { gap: 6px; padding: 8px 10px 0; }
+  .chat-chip { font-size: 12px; padding: 6px 10px; }
+  .chat-input-row { padding: 10px; gap: 8px; }
+  .chat-tip { font-size: 11.5px; }
+
+  /* ---------- 数据中心 ---------- */
+  .ring svg { width: 128px; height: 128px; }
+  .ring-label b { font-size: 22px; }
+  .bar-track { height: 8px; }
+}
+
+@media (max-width: 400px) {
+  .topstats .pill { padding: 5px 8px; font-size: 11px; }
+  #topLive { max-width: 30vw; }
+  .avatar-chip #topName { display: none; }
+  .brand-text { max-width: 36vw; }
+  .grid-3, .grid-4 { grid-template-columns: minmax(0, 1fr); }
+  .span-2 { grid-column: auto; }
+  .home-slots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hero { padding: 22px 15px 20px; }
+  .hero-stat b { font-size: 18px; }
+  .hud-chip { font-size: 10.5px; padding: 4px 7px; }
+  .game-hud .hud-row:first-child { padding-right: 76px; }
+  .chat-list { height: min(52dvh, 400px); }
 }
 
 /* ============================================================
