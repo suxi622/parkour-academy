@@ -163,7 +163,6 @@
           '</div>' +
         '</div>' +
         '<div class="combo-badge" id="gComboBadge"></div>' +
-        '<div id="gOverlay"></div>' +
       '</div>';
 
     var shell = container.querySelector('.game-shell');
@@ -174,7 +173,11 @@
       container.innerHTML = '<div class="empty"><span class="em">🖼️</span>当前浏览器不支持 Canvas 画布，无法运行跑酷关卡。<br>请换用 Chrome / Edge / Safari 最新版打开。</div>';
       return { destroy: function () {}, state: { phase: 'unsupported' } };
     }
-    var overlay = container.querySelector('#gOverlay');
+    /* 关卡介绍 / 答题卡 / 结算页放到 body 上做整页浮层：
+       不再受画布高度限制，手机上也能一屏看完、按钮不会被裁掉 */
+    var overlay = document.createElement('div');
+    overlay.className = 'overlay game-overlay';
+    document.body.appendChild(overlay);
     var comboEl = container.querySelector('#gComboBadge');
     var hudLives = container.querySelector('#gLives');
     var hudScore = container.querySelector('#gScore');
@@ -199,9 +202,16 @@
     function resize() {
       var rect = shell.getBoundingClientRect();
       var cssW = Math.max(320, rect.width || 900);
-      // 手机竖屏给更高一点的画面比例，跑酷视野更舒服
-      var ratio = (window.innerWidth || W) < 720 ? 0.74 : 0.62;
-      var cssH = Math.round(cssW * ratio);
+      var isPhone = (window.innerWidth || W) < 720;
+      var immersive = isPhone && document.body.classList.contains('game-page');
+      var cssH;
+      if (immersive) {
+        // 手机上整页沉浸式：画面铺满屏幕高度
+        cssH = Math.max(420, Math.round(window.innerHeight || cssW * 1.6));
+      } else {
+        // 手机竖屏给更高一点的画面比例，跑酷视野更舒服
+        cssH = Math.round(cssW * (isPhone ? 0.74 : 0.62));
+      }
       DPR = Math.min(2, window.devicePixelRatio || 1);
       canvas.width = Math.round(cssW * DPR);
       canvas.height = Math.round(cssH * DPR);
@@ -433,7 +443,7 @@
     function renderQuestion(q, o) {
       var base = coinBase(q);
       var html = [];
-      html.push('<div class="overlay" id="qOverlay"><div class="overlay-card q-card">');
+      html.push('<div class="overlay-card q-card" id="qOverlay">');
       html.push('<div class="row between"><span class="q-type-chip">' + questionTypeName(q.type) + '</span>');
       html.push('<span class="q-reward">答对可得 <b>+' + (o && o.boss ? base * 3 : base) + '</b> 🪙</span></div>');
       html.push('<div class="q-content">' + esc(q.content) + '</div>');
@@ -455,7 +465,7 @@
       html.push('<button class="btn btn-ghost" id="qSkip">跳过</button>');
       html.push('</div>');
       html.push('<div class="center muted" style="font-size:12px;margin-top:10px">答对：建筑爆金币（越难越多）· 加速前进 &nbsp;|&nbsp; 答错：扣 1 点生命 · 躲开建筑则不会出题</div>');
-      html.push('</div></div>');
+      html.push('</div>');
       setOverlay(html.join(''));
 
       var selected = null;
@@ -1519,7 +1529,7 @@
 
       var stars = victory ? (accuracy >= 90 ? '⭐⭐⭐' : accuracy >= 70 ? '⭐⭐' : '⭐') : '💥';
       setOverlay(
-        '<div class="overlay"><div class="overlay-card result-card">' +
+        '<div class="overlay-card result-card">' +
           '<div style="font-size:52px">' + (victory ? '🏁' : '💥') + '</div>' +
           '<div class="result-title">' + (victory ? '冲过终点！' : '生命耗尽') + '</div>' +
           '<div class="result-stars">' + stars + '</div>' +
@@ -1539,11 +1549,11 @@
             '<span>用时 ' + state.result.durationSec + 's</span>' +
           '</div>' +
           (state.result.wrongIds.length ? '<div class="analysis">错题已自动加入「错题修复」，共 ' + state.result.wrongIds.length + ' 道</div>' : '') +
-          '<div class="row" style="margin-top:18px;gap:10px">' +
+          '<div class="row game-actions" style="margin-top:18px;gap:10px">' +
             '<button class="btn btn-primary grow" id="gAgain">再玩一次</button>' +
             '<button class="btn btn-ghost grow" id="gBack">返回学生端</button>' +
           '</div>' +
-        '</div></div>');
+        '</div>');
 
       var again = overlay.querySelector('#gAgain');
       var back = overlay.querySelector('#gBack');
@@ -1553,7 +1563,7 @@
 
     function ready() {
       setOverlay(
-        '<div class="overlay"><div class="overlay-card center">' +
+        '<div class="overlay-card center">' +
           '<div class="ready-emoji">' + (theme.deco[0] || '🐱') + '</div>' +
           '<h2 class="ready-title" style="margin-top:8px;font-size:23px;font-weight:900">' + esc(subjectName) + ' · ' + esc(difficultyName) + '</h2>' +
           '<div class="ready-partner">🐾 出战伙伴：' + esc(partnerName) + ' Lv' + partnerLevel +
@@ -1569,11 +1579,11 @@
             '<div class="hint-kb">⬅️ ➡️ / A D 切换跑道　空格 / ↑ 跳跃（跳过建筑＝躲开）　⌨️ 答题按 1-4 选选项</div>' +
             '<div class="hint-touch">📱 左右滑动换道，向上滑动跳跃；答题点选项后按「确认答案」</div>' +
           '</div>' +
-          '<div class="row" style="margin-top:18px;gap:10px">' +
+          '<div class="row game-actions" style="margin-top:18px;gap:10px">' +
             '<button class="btn btn-primary btn-lg grow" id="gStart">开始跑酷</button>' +
             '<button class="btn btn-ghost" id="gExit">返回</button>' +
           '</div>' +
-        '</div></div>');
+        '</div>');
       overlay.querySelector('#gStart').onclick = function () { startCountdown(); };
       overlay.querySelector('#gExit').onclick = function () { if (opts.onQuit) opts.onQuit(); };
     }
@@ -1608,15 +1618,15 @@
       if (state.phase !== 'playing') return;
       state.phase = 'paused';
       setOverlay(
-        '<div class="overlay"><div class="overlay-card center">' +
+        '<div class="overlay-card center">' +
           '<div style="font-size:44px">⏸️</div>' +
           '<h2 style="margin-top:8px;font-size:22px;font-weight:900">已暂停</h2>' +
           '<p class="muted" style="margin-top:6px;font-size:13px">' + esc(subjectName) + ' · ' + esc(difficultyName) + '</p>' +
-          '<div class="row" style="margin-top:18px;gap:10px">' +
+          '<div class="row game-actions" style="margin-top:18px;gap:10px">' +
             '<button class="btn btn-primary grow" id="gResume">继续跑酷</button>' +
             '<button class="btn btn-ghost" id="gQuit">退出</button>' +
           '</div>' +
-        '</div></div>');
+        '</div>');
       overlay.querySelector('#gResume').onclick = function () { resume(); };
       overlay.querySelector('#gQuit').onclick = function () { if (opts.onQuit) opts.onQuit(); };
     }
@@ -1703,6 +1713,7 @@
         if (raf) cancelAnimationFrame(raf);
         document.removeEventListener('keydown', keyHandler);
         window.removeEventListener('resize', resize);
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
       },
       state: state,
       theme: theme,
