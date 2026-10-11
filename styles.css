@@ -945,6 +945,10 @@ body:not(.auth) .page { padding-top: 30px; }
 .hint-block { font-size: 12.5px; line-height: 1.9; text-align: left; background: #f7fafd; border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; margin-top: 14px; }
 .hint-touch { display: none; }
 
+/* 跑酷里的浮层不能拦截画布上的滑动操作：只有卡片本身接收点击 */
+.game-shell .overlay { pointer-events: none; }
+.game-shell .overlay > .overlay-card { pointer-events: auto; }
+
 /* ============================================================
    学生提问 / 老师回复
    ============================================================ */
@@ -1133,6 +1137,7 @@ body:not(.auth) .page { padding-top: 30px; }
   }
   .game-shell .overlay .overlay-card {
     width: 100%; max-width: 520px;
+    max-height: 88%;                                    /* 老浏览器兜底 */
     max-height: calc(100dvh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding: 16px 15px;
