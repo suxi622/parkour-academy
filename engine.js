@@ -61,6 +61,99 @@
   }
 
   /* ============================================================
+   * 班级年级自动识别
+   * 老师建班时输入「三年级 2 班」「初一(1)班」「Grade 5」等，
+   * 自动判断所属学段与年级，用于「同年级榜」与班级对比统计。
+   * ============================================================ */
+  var CN_NUM = { '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
+  var CN_ORDER = ['', '一', '二', '三'];
+
+  var GRADES = [
+    { key: 'pre', label: '学前', stage: '学前', order: 0 },
+    { key: 'p1', label: '一年级', stage: '小学', order: 1 },
+    { key: 'p2', label: '二年级', stage: '小学', order: 2 },
+    { key: 'p3', label: '三年级', stage: '小学', order: 3 },
+    { key: 'p4', label: '四年级', stage: '小学', order: 4 },
+    { key: 'p5', label: '五年级', stage: '小学', order: 5 },
+    { key: 'p6', label: '六年级', stage: '小学', order: 6 },
+    { key: 'j1', label: '初一', stage: '初中', order: 7 },
+    { key: 'j2', label: '初二', stage: '初中', order: 8 },
+    { key: 'j3', label: '初三', stage: '初中', order: 9 },
+    { key: 's1', label: '高一', stage: '高中', order: 10 },
+    { key: 's2', label: '高二', stage: '高中', order: 11 },
+    { key: 's3', label: '高三', stage: '高中', order: 12 }
+  ];
+
+  function normalizeClassName(input) {
+    return String(input === undefined || input === null ? '' : input)
+      .toLowerCase()
+      .replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 65248); })
+      .replace(/\s+/g, '')
+      .replace(/[（(]/g, '(').replace(/[）)]/g, ')');
+  }
+
+  function cnDigit(ch) {
+    if (/[0-9]/.test(ch)) return parseInt(ch, 10);
+    return CN_NUM[ch] || 0;
+  }
+
+  function gradeByKey(key) {
+    for (var i = 0; i < GRADES.length; i++) if (GRADES[i].key === key) return GRADES[i];
+    return null;
+  }
+  function gradeByLabel(label) {
+    for (var i = 0; i < GRADES.length; i++) if (GRADES[i].label === label) return GRADES[i];
+    return null;
+  }
+
+  /**
+   * 从班级名推断年级。
+   * @returns {{key:string,label:string,stage:string,order:number,auto:boolean,matched:string}}
+   */
+  function inferGrade(rawName) {
+    var s = normalizeClassName(rawName);
+    function mk(key, label, stage, order, matched) {
+      return { key: key, label: label, stage: stage, order: order, auto: true, matched: matched || '' };
+    }
+    if (!s) return { key: 'unknown', label: '未识别', stage: '', order: 99, auto: false, matched: '' };
+    if (/幼儿园|学前|大班|中班|小班/.test(s)) return mk('pre', '学前', '学前', 0, '幼儿园/学前');
+
+    var i, m;
+    var JUNIOR_NUM = ['', '七', '八', '九'];
+    var SENIOR_NUM = ['', '十', '十一', '十二'];
+    for (i = 1; i <= 3; i++) {
+      if (s.indexOf('高' + CN_ORDER[i]) >= 0 || s.indexOf('高' + i) >= 0 ||
+          s.indexOf(SENIOR_NUM[i] + '年级') >= 0 || s.indexOf((9 + i) + '年级') >= 0) {
+        return mk('s' + i, '高' + CN_ORDER[i], '高中', 9 + i, '高中' + CN_ORDER[i]);
+      }
+    }
+    for (i = 1; i <= 3; i++) {
+      if (s.indexOf('初' + CN_ORDER[i]) >= 0 || s.indexOf('初' + i) >= 0 ||
+          s.indexOf(JUNIOR_NUM[i] + '年级') >= 0 || s.indexOf((6 + i) + '年级') >= 0) {
+        return mk('j' + i, '初' + CN_ORDER[i], '初中', 6 + i, '初中' + CN_ORDER[i]);
+      }
+    }
+    m = s.match(/([一二三四五六]|[1-6])年级/) || s.match(/小([一二三四五六123456])/) ||
+      s.match(/grade([1-6])/) || s.match(/([一二三四五六]|[1-6])(班|年级)/);
+    if (m) {
+      var k = cnDigit(m[1]);
+      if (k >= 1 && k <= 6) return mk('p' + k, ['', '一', '二', '三', '四', '五', '六'][k] + '年级', '小学', k, '小学' + k + '年级');
+    }
+    if (/小学|实验小/.test(s)) return mk('primary', '小学（未指明年级）', '小学', 5.5, '小学');
+    if (/初中|中学|附中/.test(s)) return mk('junior', '初中（未指明年级）', '初中', 7.5, '初中');
+    if (/高中/.test(s)) return mk('senior', '高中（未指明年级）', '高中', 10.5, '高中');
+    return { key: 'unknown', label: '未识别', stage: '', order: 99, auto: false, matched: '' };
+  }
+
+  /** 年级排序（用于同年级榜与班级对比排序） */
+  function gradeOrder(cls) {
+    if (!cls) return 99;
+    if (typeof cls.order === 'number') return cls.order;
+    var g = gradeByKey(cls.gradeKey) || gradeByLabel(cls.gradeLabel);
+    return g ? g.order : 99;
+  }
+
+  /* ============================================================
    * 题库
    * answer 一律用"选项字母"，与教师端选题方式一致；
    * accept 用于填空题的等价写法（可写多种）。
@@ -918,6 +1011,12 @@
     QUESTION_BANK: QUESTION_BANK,
     subjectByKey: subjectByKey,
     subjectByName: subjectByName,
+    GRADES: GRADES,
+    gradeByKey: gradeByKey,
+    gradeByLabel: gradeByLabel,
+    inferGrade: inferGrade,
+    gradeOrder: gradeOrder,
+    normalizeClassName: normalizeClassName,
     normalizeText: normalizeText,
     toNumber: toNumber,
     resolveChoiceIndex: resolveChoiceIndex,
