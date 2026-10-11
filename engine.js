@@ -703,7 +703,9 @@
     if (!me.subjectPoints) me.subjectPoints = {};
     me.isMe = true;
 
-    var peers = PEER_SEED.map(function (p, i) {
+    /* 默认不注入任何演示 / 测试账号：榜单里只会出现真实进入的用户。
+       需要给演示场合一些陪跑数据时，显式传 demoPeers: true。 */
+    var peers = (config.demoPeers ? PEER_SEED : []).map(function (p, i) {
       var base = Math.round(760 * p.level + rand() * 260);
       var pts = {
         today: Math.round(base * 0.28 + rand() * 90),
@@ -761,6 +763,7 @@
     }
 
     function tick() {
+      if (!peers.length) { emit(); return; }
       tickCount++;
       var bursts = 1 + (rand() < 0.42 ? 1 : 0) + (rand() < 0.12 ? 1 : 0);
       for (var i = 0; i < bursts; i++) {
