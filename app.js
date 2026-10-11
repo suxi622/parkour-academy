@@ -249,14 +249,44 @@
   }
 
   /** 学生视角的班级信息 */
+  /** 学生当前年级：班级记录优先，其次从班级名 / 已有信息自动推断（老班级自动补全） */
+  function myGrade() {
+    var cls = myClass();
+    var key = (cls && cls.gradeKey) || S.user.gradeKey || '';
+    var label = (cls && cls.gradeLabel) || S.user.gradeLabel || '';
+    if (!key || key === 'unknown') {
+      var g1 = PK.inferGrade((cls && cls.name) || S.user.klass || '');
+      if (g1.auto) { key = g1.key; label = g1.label; }
+    }
+    if (key === 'unknown') key = '';
+    return { key: key, label: label, stage: (PK.gradeByKey(key) || {}).stage || '' };
+  }
+
+  /** 老班级没有年级信息时，按班级名自动补全（AI 识别） */
+  function healGrades() {
+    var changed = false;
+    (S.classes || []).forEach(function (c) {
+      if (c.gradeKey && c.gradeKey !== 'unknown') return;
+      var g = PK.inferGrade(c.name);
+      if (g.auto) { c.gradeKey = g.key; c.gradeLabel = g.label; c.stage = g.stage; changed = true; }
+    });
+    if (S.user.klass && (!S.user.gradeKey || S.user.gradeKey === 'unknown')) {
+      var mine = myGrade();
+      if (mine.key) { S.user.gradeKey = mine.key; S.user.gradeLabel = mine.label; changed = true; }
+    }
+    if (changed) save();
+    return changed;
+  }
+
   function myScope() {
     var cls = myClass();
+    var g = myGrade();
     return {
       school: S.user.school || '',
       schoolKey: normSchool(S.user.school),
       className: cls ? cls.name : (S.user.klass || ''),
-      gradeKey: (cls && cls.gradeKey) || S.user.gradeKey || '',
-      gradeLabel: (cls && cls.gradeLabel) || S.user.gradeLabel || ''
+      gradeKey: g.key,
+      gradeLabel: g.label
     };
   }
 
@@ -268,6 +298,17 @@
   }
 
   /** 把一个榜单快照按身份过滤：学生只看本班 / 同年级，老师只看自己带的学生 */
+  /** 老师当前选择的筛选：all / grade:<key> / <班级名> */
+  function teacherScopeFilter() {
+    var f = ui.lbClass || 'all';
+    if (f.indexOf('grade:') === 0) {
+      var key = f.slice(6);
+      return { type: 'grade', key: key, label: (PK.gradeByKey(key) || {}).label || key };
+    }
+    if (f === 'all') return { type: 'all' };
+    return { type: 'class', name: f };
+  }
+
   function eventInScope(ev) {
     if (!ev) return false;
     if (ev.isMe) return true;
@@ -279,7 +320,9 @@
     if (isTeacher()) {
       var names = teacherClassNames();
       if (!names.length) return true;
-      if (ui.lbClass && ui.lbClass !== 'all' && klass !== ui.lbClass) return false;
+      var f = teacherScopeFilter();
+      if (f.type === 'class' && klass !== f.name) return false;
+      if (f.type === 'grade' && (grade ? grade !== f.key : true)) return false;
       return names.indexOf(klass) !== -1;
     }
     var mine = myScope();
@@ -300,7 +343,12 @@
       if (isTeacher()) {
         var names = teacherClassNames();
         if (!names.length) return true;
-        if (ui.lbClass && ui.lbClass !== 'all' && e.klass !== ui.lbClass) return false;
+        var f = teacherScopeFilter();
+        if (f.type === 'class' && e.klass !== f.name) return false;
+        if (f.type === 'grade') {
+          var ek = e.gradeKey || (PK.inferGrade(e.klass || '').key || '');
+          if (ek !== f.key) return false;
+        }
         return names.indexOf(e.klass) !== -1;
       }
       if (scope === 'grade') {
@@ -1646,31 +1694,52 @@
       '</div>' +
     '</div>';
 
-    // 范围切换：学生只能看本班 / 同年级；老师看自己带领的班级
+    // 范围切换：学生看本班 / 同年级；老师看自己带领的班级或年级
+    var mineGrade = myGrade();
+    var scopeCtl, scopeHint;
+    if (isTeacher()) {
+      var gradeMap = {};
+      leadingClasses().forEach(function (c) {
+        var g = c.gradeKey && c.gradeKey !== 'unknown' ? c.gradeKey : (PK.inferGrade(c.name).key || '');
+        if (g && g !== 'unknown') gradeMap[g] = (PK.gradeByKey(g) || {}).label || g;
+      });
+      var gradeKeys = Object.keys(gradeMap).sort(function (a, b) { return PK.gradeOrder({ gradeKey: a }) - PK.gradeOrder({ gradeKey: b }); });
+      scopeCtl = '<select class="select" style="width:auto;min-width:190px" data-action="lb-class">' +
+        '<option value="all"' + (ui.lbClass === 'all' ? ' selected' : '') + '>我带领的全部班级</option>' +
+        (gradeKeys.length
+          ? '<optgroup label="按年级">' + gradeKeys.map(function (k) {
+              return '<option value="grade:' + k + '"' + (ui.lbClass === 'grade:' + k ? ' selected' : '') + '>' + esc(gradeMap[k]) + '榜（同年级）</option>';
+            }).join('') + '</optgroup>'
+          : '') +
+        (leadingClasses().length
+          ? '<optgroup label="按班级">' + leadingClasses().map(function (c) {
+              return '<option value="' + esc(c.name) + '"' + (ui.lbClass === c.name ? ' selected' : '') + '>' + esc(c.name) + '（' + esc(c.gradeLabel || '未识别') + '）</option>';
+            }).join('') + '</optgroup>'
+          : '') +
+      '</select>';
+      var tf = teacherScopeFilter();
+      scopeHint = tf.type === 'grade'
+        ? ('只看同校 ' + esc(tf.label) + ' 的同学（含我带领的班级）')
+        : '只统计我带领的班级（同一所学校）';
+    } else {
+      scopeCtl = '<div class="filter-tabs">' +
+        '<button data-action="lb-scope" data-key="class" class="' + (ui.lbScope !== 'grade' ? 'active' : '') + '">本班榜</button>' +
+        '<button data-action="lb-scope" data-key="grade" class="' + (ui.lbScope === 'grade' ? 'active' : '') + '">同年级榜</button>' +
+      '</div>';
+      scopeHint = ui.lbScope === 'grade'
+        ? ('只看' + (mineGrade.label ? '同校 ' + mineGrade.label : '同校同年级') + '的同学' + (mineGrade.key ? '' : '（还没识别到你的年级，加入班级后会自动带上）'))
+        : (mine.className ? '只看同校同班（' + esc(mine.className) + '）的同学' : '你还没有加入班级，加入后就能看到同班同学');
+    }
     html += '<div class="card" style="margin-bottom:16px">' +
       '<div class="row between wrap" style="gap:10px">' +
         '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">' +
-          '<span class="card-sub">查看范围</span>' +
-          (isTeacher()
-            ? '<select class="select" style="width:auto;min-width:170px" data-action="lb-class">' +
-                '<option value="all"' + (ui.lbClass === 'all' ? ' selected' : '') + '>我带领的全部班级</option>' +
-                leadingClasses().map(function (c) {
-                  return '<option value="' + esc(c.name) + '"' + (ui.lbClass === c.name ? ' selected' : '') + '>' + esc(c.name) + '（' + esc(c.gradeLabel || '未识别') + '）</option>';
-                }).join('') +
-              '</select>'
-            : '<div class="filter-tabs">' +
-                '<button data-action="lb-scope" data-key="class" class="' + (ui.lbScope !== 'grade' ? 'active' : '') + '">本班榜</button>' +
-                '<button data-action="lb-scope" data-key="grade" class="' + (ui.lbScope === 'grade' ? 'active' : '') + '"' + (mine.gradeKey ? '' : ' disabled') + '>同年级榜</button>' +
-              '</div>') +
+          '<span class="card-sub">查看范围</span>' + scopeCtl +
         '</div>' +
-        '<span class="lb-sub">' +
-          (isTeacher()
-            ? '只统计你带领的班级（同一所学校）'
-            : (ui.lbScope === 'grade'
-                ? '只显示同校同年级的同学' + (mine.gradeLabel ? '（' + esc(mine.gradeLabel) + '）' : '')
-                : '只显示同校同班的同学')) +
-        '</span>' +
+        '<span class="lb-sub">' + scopeHint + '</span>' +
       '</div>' +
+      (!isTeacher() && ui.lbScope === 'grade' && !mineGrade.key
+        ? '<div class="analysis" style="margin-top:10px">💡 还没识别到你的年级：让老师把班级名写成「三年级 2 班」这样的形式，或先加入班级（加入后年级会自动带出），同年级榜就会生效。</div>'
+        : '') +
     '</div>';
 
     html += '<div class="split">' +
@@ -1680,7 +1749,15 @@
           '<span class="card-sub">参与 ' + snap.entries.length + ' 人 · 更新于 ' + new Date(snap.at).toLocaleTimeString('zh-CN') + '</span>' +
         '</div>' +
         '<div data-live="lb-podium">' + podiumHtml(top) + '</div>' +
-        (snap.entries.length <= 2 ? '<div class="analysis" style="margin-bottom:14px">📣 现在只有 ' + snap.entries.length + ' 位参与者。把当前网址分享给同学或投屏到教室大屏，大家在自己设备上答题，这里的积分与名次会实时变化。</div>' : '') +
+        (snap.entries.length <= 2
+          ? '<div class="analysis" style="margin-bottom:14px">📣 ' +
+            (isTeacher()
+              ? ('我带领的班级目前只有 ' + snap.entries.length + ' 位参与者。学生用「同校 + 班级码」登录后会自动出现在这里。')
+              : (ui.lbScope === 'grade'
+                  ? ('同年级目前只有 ' + snap.entries.length + ' 位参与者。' + (mineGrade.key ? '同校 ' + esc(mineGrade.label) + ' 的同学登录后会自动出现在这里。' : '还没有识别到你的年级，加入班级后就能看到同年级同学。'))
+                  : ('本班目前只有 ' + snap.entries.length + ' 位参与者。把班级码发给同班同学（要同校），他们登录后就会出现在这里。'))) +
+            '</div>'
+          : '') +
         '<div style="margin-top:6px">' +
           '<div class="card-title" style="font-size:14px"><span class="emoji">📋</span>完整榜单</div>' +
           '<div data-live="lb-list">' + leaderboardRows(rest, true) + '</div>' +
@@ -2364,7 +2441,7 @@
       if (farCls.length) {
         var clsChanged = false;
         farCls.forEach(function (m) { if (mergeClass(m)) clsChanged = true; });
-        if (clsChanged) { save(); if (!currentGame) render(); }
+        if (clsChanged) { healGrades(); save(); if (!currentGame) render(); }
       }
 
       var far = (leaderboard.takeAsks ? leaderboard.takeAsks() : []);
@@ -3458,6 +3535,7 @@
     render();
   }
   if (S.loggedIn && leaderboard.setReady) leaderboard.setReady(true);
+  healGrades();     // 老班级按班级名自动补全年级（AI 识别）
 
   // 登录后首次进入自动弹出「使用解说」（勾选“下次不再弹出”后不再自动弹）
   if (!S.seenGuide && S.loggedIn) {
