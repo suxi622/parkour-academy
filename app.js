@@ -5,6 +5,7 @@
 (function () {
   'use strict';
   var PK = window.PK;
+  var APP_VERSION = 'v7';      // 界面上会显示，方便确认手机上跑的是不是最新版
 
   /* ============================================================
    * 工具
@@ -738,6 +739,7 @@
           }).join('') +
         '</div>' +
         '<button class="btn btn-ghost btn-block" data-action="open-guide" style="margin-top:14px">📖 查看完整使用解说</button>' +
+        '<p class="muted" style="font-size:11.5px;margin-top:12px;text-align:center">当前版本 ' + APP_VERSION + '（看到旧界面请强制刷新）</p>' +
       '</div>' +
     '</div>';
   }
@@ -887,6 +889,20 @@
             '</div>';
           }).join('') +
         '</div>' +
+      '</section>';
+    }
+
+    // 还没加入班级 → 直接在页面上放一个「加入班级」卡片，不用点弹窗，避免点了"没反应"
+    if (!myClass()) {
+      html += '<section class="card join-card fade-in" style="margin-top:18px">' +
+        '<div class="card-title"><span class="emoji">🎒</span>加入班级 <span class="card-sub">学校名 + 4 位班级码，和老师保持一致</span></div>' +
+        '<div class="join-inline">' +
+          '<input class="input" id="jiSchool" maxlength="20" placeholder="学校名称（要和老师填的一样）" value="' + esc(S.user.school || S.lastSchool || '') + '">' +
+          '<input class="input code-input" id="jiCode" inputmode="numeric" maxlength="4" placeholder="4 位班级码">' +
+          '<button class="btn btn-primary" data-action="join-inline">加入班级</button>' +
+        '</div>' +
+        '<div id="jiMsg" class="login-msg">' + (ui.joinMsg || '') + '</div>' +
+        '<p class="muted" style="font-size:12px">加入后就能看到同班同学 / 同年级同学的排名，以及老师布置的作业。</p>' +
       '</section>';
     }
 
@@ -2720,6 +2736,8 @@
     if (!actionEl) return;
     var action = actionEl.getAttribute('data-action');
 
+    // 任何点击动作出错都要看得见，而不是"点了没反应"
+    try {
     switch (action) {
       case 'pick-subject': {
         ui.subject = actionEl.getAttribute('data-key');
@@ -3027,6 +3045,35 @@
       case 'join-class':
         openJoinClass();
         break;
+      case 'join-inline': {
+        var jiSchool = $('#jiSchool');
+        var jiCode = $('#jiCode');
+        var jiMsg = $('#jiMsg');
+        var jiSchoolVal = jiSchool ? jiSchool.value.trim() : '';
+        var jiCodeVal = jiCode ? String(jiCode.value || '').replace(/\s/g, '') : '';
+        if (!jiSchoolVal) { if (jiMsg) jiMsg.innerHTML = '<span class="bad">请先填写学校名称</span>'; toast('请先填写学校名称', 'bad'); break; }
+        if (!/^\d{4}$/.test(jiCodeVal)) { if (jiMsg) jiMsg.innerHTML = '<span class="bad">班级码是 4 位数字，请检查一下</span>'; toast('班级码是 4 位数字', 'bad'); break; }
+        if (jiMsg) jiMsg.innerHTML = '🔍 正在查找班级…';
+        ui.joinMsg = '';
+        resolveClass(jiSchoolVal, jiCodeVal, function (cls) {
+          if (!cls) {
+            var err = '<span class="bad">没找到这个班级：请确认学校名与老师给的一致（差一个字都不算同一所学校），班级码为 4 位数字。</span>';
+            ui.joinMsg = err;                 // 记住提示，页面被刷新也还在
+            if (!setMsgById('jiMsg', err)) render();
+            toast('没找到这个班级，请核对学校名与班级码', 'bad');
+            return;
+          }
+          ui.joinMsg = '';
+          S.user.school = jiSchoolVal.slice(0, 20);
+          S.lastSchool = S.user.school;
+          joinClassById(cls);
+          save();
+          toast('已加入「' + cls.name + '」（' + (cls.gradeLabel || '年级未识别') + '）', 'ok');
+          confetti(40);
+          render();
+        });
+        break;
+      }
       case 'publish-homework':
         openHomeworkForm();
         break;
@@ -3090,6 +3137,10 @@
         toast('竞速已结束');
         render();
         break;
+    }
+    } catch (err) {
+      console.error('[动作出错]', action, err);
+      try { toast('操作出错：' + ((err && err.message) || action) + '（版本 ' + APP_VERSION + '）', 'bad'); } catch (e2) {}
     }
   });
 
