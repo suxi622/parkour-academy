@@ -1547,20 +1547,20 @@
     function ready() {
       overlay.innerHTML =
         '<div class="overlay"><div class="overlay-card center">' +
-          '<div style="font-size:50px">🐱</div>' +
-          '<h2 style="margin-top:8px;font-size:23px;font-weight:900">' + esc(subjectName) + ' · ' + esc(difficultyName) + '</h2>' +
+          '<div class="ready-emoji">' + (theme.deco[0] || '🐱') + '</div>' +
+          '<h2 class="ready-title" style="margin-top:8px;font-size:23px;font-weight:900">' + esc(subjectName) + ' · ' + esc(difficultyName) + '</h2>' +
           '<div class="ready-partner">🐾 出战伙伴：' + esc(partnerName) + ' Lv' + partnerLevel +
             (coinBonusPct > 0 ? '（金币 +' + coinBonusPct + '%、分数 +' + scoreBonusPct + '%）' : '') + '</div>' +
           '<p class="muted" style="margin-top:8px;font-size:13.5px">跑起来，撞到建筑就会出题，答对让建筑爆金币</p>' +
           '<div class="rule-grid">' +
             '<div class="rule-item"><span>🏢</span><div><b>撞建筑 → 出题</b><p>换道或跳跃躲开就不会出题</p></div></div>' +
-            '<div class="rule-item"><span>🪙</span><div><b>答对 → 爆金币</b><p>题目越难，金币越多（基础 10 / 巩固 20 / 冲刺 30）</p></div></div>' +
-            '<div class="rule-item"><span>❤️</span><div><b>答错 → 掉血</b><p>共 3 点生命，连对可以叠连击奖励</p></div></div>' +
-            '<div class="rule-item"><span>🏁</span><div><b>跑完全程 → 结算</b><p>躲得越稳、答得越准，得分越高</p></div></div>' +
+            '<div class="rule-item"><span>🪙</span><div><b>答对 → 爆金币</b><p>题目越难，金币越多（10 / 20 / 30）</p></div></div>' +
+            '<div class="rule-item"><span>❤️</span><div><b>答错 → 掉血</b><p>共 3 点生命，连对有连击奖励</p></div></div>' +
+            '<div class="rule-item"><span>🏁</span><div><b>跑完全程 → 结算</b><p>躲得越稳、答得越准分越高</p></div></div>' +
           '</div>' +
-          '<div class="muted" style="font-size:12.5px;line-height:1.9;text-align:left;background:#f7fafd;border-radius:12px;padding:12px 14px;margin-top:14px">' +
-            '⬅️ ➡️ / A D 切换跑道　空格 / ↑ 跳跃（跳过建筑＝躲开）<br>' +
-            '📱 手机：左右滑动换道，向上滑动跳跃　⌨️ 答题时按 1-4 选选项，回车提交' +
+          '<div class="hint-block muted">' +
+            '<div class="hint-kb">⬅️ ➡️ / A D 切换跑道　空格 / ↑ 跳跃（跳过建筑＝躲开）　⌨️ 答题按 1-4 选选项</div>' +
+            '<div class="hint-touch">📱 左右滑动换道，向上滑动跳跃；答题点选项后按「确认答案」</div>' +
           '</div>' +
           '<div class="row" style="margin-top:18px;gap:10px">' +
             '<button class="btn btn-primary btn-lg grow" id="gStart">开始跑酷</button>' +
