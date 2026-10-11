@@ -1871,6 +1871,9 @@
     var crossRole = S.loggedIn && seg[0] !== 'login' &&
       ((isTeacher() && seg[0] === 'student') || (!isTeacher() && seg[0] === 'teacher'));
 
+    // 跑酷页：手机端整页沉浸式（隐藏顶栏与底部导航，画面铺满屏幕）
+    document.body.classList.toggle('game-page', !!(S.loggedIn && !crossRole && seg[0] === 'student' && seg[1] === 'game'));
+
     if (!S.loggedIn) html = viewLogin();
     else if (seg[0] === 'login') html = viewLogin();
     else if (crossRole) html = blockedView(isTeacher() ? 'teacher' : 'student');
