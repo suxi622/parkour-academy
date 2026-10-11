@@ -961,6 +961,10 @@ body:not(.auth) .page { padding-top: 30px; }
 .join-inline .input { flex: 1 1 200px; min-width: 0; }
 .join-inline .code-input { flex: 0 1 150px; text-align: center; }
 .join-inline .btn { flex: 0 0 auto; min-width: 110px; }
+.emoji-pick { display: flex; flex-wrap: wrap; gap: 8px; }
+.emoji-btn { width: 40px; height: 40px; border-radius: 12px; border: 1.6px solid var(--line); background: #fff; font-size: 20px; line-height: 1; display: grid; place-items: center; cursor: pointer; }
+.emoji-btn.on { border-color: var(--primary); background: #eef6ff; box-shadow: 0 0 0 3px rgba(43, 140, 238, 0.15); }
+.avatar-chip { cursor: pointer; }
 
 /* 关卡介绍里的操作提示：手机显示触屏说明，电脑显示键盘说明 */
 .hint-block { font-size: 12.5px; line-height: 1.9; text-align: left; background: #f7fafd; border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; margin-top: 14px; }
