@@ -192,7 +192,9 @@
     function resize() {
       var rect = shell.getBoundingClientRect();
       var cssW = Math.max(320, rect.width || 900);
-      var cssH = Math.round(cssW * 0.62);
+      // 手机竖屏给更高一点的画面比例，跑酷视野更舒服
+      var ratio = (window.innerWidth || W) < 720 ? 0.74 : 0.62;
+      var cssH = Math.round(cssW * ratio);
       DPR = Math.min(2, window.devicePixelRatio || 1);
       canvas.width = Math.round(cssW * DPR);
       canvas.height = Math.round(cssH * DPR);
