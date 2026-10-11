@@ -1283,7 +1283,7 @@
           '<span class="muted">答题 ' + answered + ' 题</span><span class="muted">答对 ' + correctTotal + ' 题</span>' +
         '</div>' +
       '</div>' +
-      '<div class="card" style="grid-column:span 2">' +
+      '<div class="card span-2">' +
         '<div class="card-title"><span class="emoji">📈</span>近 7 天积分趋势</div>' +
         '<svg viewBox="0 0 380 160" style="width:100%;height:170px">' +
           '<defs><linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(43,140,238,.35)"/><stop offset="100%" stop-color="rgba(43,140,238,0)"/></linearGradient></defs>' +
