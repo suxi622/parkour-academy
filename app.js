@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   var PK = window.PK;
-  var APP_VERSION = 'v8';      // 界面上会显示，方便确认手机上跑的是不是最新版
+  var APP_VERSION = 'v10';      // 界面上会显示，方便确认手机上跑的是不是最新版
 
   /* ============================================================
    * 工具
@@ -107,47 +107,84 @@
       S.leader = leaderboard.toJSON();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(S));
     } catch (e) { /* 忽略存储失败 */ }
+    // 配了后端时，游戏存档（金币 / 伙伴 / 家园 / 装备 / 聊天 / 趋势）也同步到云端账号
+    if (window.PKBackend && window.PKBackend.configured && S.loggedIn) {
+      window.PKBackend.savePlayerState({
+        coins: S.coins,
+        inventory: S.inventory,
+        equipped: S.equipped,
+        partners: S.partners,
+        home: S.home,
+        gear: S.gear,
+        chat: S.chat,
+        history: (S.history || []).slice(0, 60),
+        daily: S.daily,
+        stats: S.stats,
+        masteredIds: (S.masteredIds || []).slice(0, 300)
+      });
+    }
   }
 
   var lbMode = 'local';
   var lbOnline = 0;
 
-  var leaderboard = window.PKApi.createAdaptive({
-    seed: 20261009,
-    me: {
-      id: 'me',
-      name: S.user.name,
-      emoji: S.user.emoji,
-      klass: S.user.klass,
-      school: S.user.school,
-      gradeKey: S.user.gradeKey,
-      gradeLabel: S.user.gradeLabel,
-      isMe: true,
-      points: { today: 0, week: 0, total: 0 },
-      subjectPoints: {},
-      correct: 0,
-      total: 0,
-      streak: 0
-    },
-    onAward: function (gain, subjectKey) {
-      if (!gain) return;
-      var key = todayKey();
-      S.daily[key] = (S.daily[key] || 0) + gain;
-      save();
-    },
-    onModeChange: function (mode) {
-      lbMode = mode;
-      updateLiveBadge();
-      if (mode === 'remote') toast('已连接实时后端，榜单为真实多端同步', 'ok');
-      else if (mode === 'cloud') toast('已连接云端实时榜单，多台设备打开同一网址即可同屏竞技', 'ok');
-      if (!currentGame) render();
-    }
-  });
+  function leaderboardOptions() {
+    return {
+      seed: 20261009,
+      me: {
+        id: 'me',
+        name: S.user.name,
+        emoji: S.user.emoji,
+        klass: S.user.klass,
+        school: S.user.school,
+        gradeKey: S.user.gradeKey,
+        gradeLabel: S.user.gradeLabel,
+        isMe: true,
+        points: { today: 0, week: 0, total: 0 },
+        subjectPoints: {},
+        correct: 0,
+        total: 0,
+        streak: 0
+      },
+      onAward: function (gain, subjectKey) {
+        if (!gain) return;
+        var key = todayKey();
+        S.daily[key] = (S.daily[key] || 0) + gain;
+        save();
+      },
+      onModeChange: function (mode) {
+        lbMode = mode;
+        updateLiveBadge();
+        if (mode === 'cloud') toast('已连接云端实时榜单，多台设备打开同一网址即可同屏竞技', 'ok');
+        if (!currentGame) render();
+      }
+    };
+  }
+
+  var leaderboard = window.PKApi.createAdaptive(leaderboardOptions());
   if (S.leader) leaderboard.load(S.leader);
   leaderboard.me.name = S.user.name;
   leaderboard.me.emoji = S.user.emoji;
   leaderboard.me.klass = S.user.klass;
   if (!leaderboard.me.points) leaderboard.me.points = { today: 0, week: 0, total: 0 };
+
+  /**
+   * 登录状态变化后重建数据源：
+   *   未登录 / 没配后端 → 本机模拟（api-offline）
+   *   已登录且配了后端 → 云端真实榜单（Supabase）
+   * 因为 Supabase 会话是异步恢复的，启动时可能还没登录，所以登录成功后再重建一次。
+   */
+  function rebuildLeaderboard() {
+    if (leaderboard && leaderboard.stop) { try { leaderboard.stop(); } catch (e) {} }
+    leaderboard = window.PKApi.createAdaptive(leaderboardOptions());
+    leaderboard.me.name = S.user.name || '同学';
+    leaderboard.me.emoji = S.user.emoji || '🐱';
+    leaderboard.me.klass = S.user.klass || '';
+    if (leaderboard.me.points === undefined) leaderboard.me.points = { today: 0, week: 0, total: 0 };
+    if (leaderboard.subscribe) leaderboard.subscribe(function () { refreshLive(); });
+    if (leaderboard.setReady) leaderboard.setReady(true);
+    return leaderboard;
+  }
 
   var ui = {
     loginRole: '',
@@ -246,6 +283,19 @@
   function resolveClass(school, code, cb) {
     var local = classBySchoolCode(school, code);
     if (local) { cb(local); return; }
+    // 配了后端：直接走数据库的 join_class（学校 + 班级码校验，成功后建立真实成员关系）
+    var BE = window.PKBackend;
+    if (BE && BE.configured) {
+      BE.joinClass(school, code).then(function (r) {
+        if (r && r.ok && r.klass) {
+          if (!classById(r.klass.id)) S.classes.push(r.klass);
+          cb(r.klass);
+        } else {
+          cb(null);
+        }
+      });
+      return;
+    }
     if (!leaderboard.refreshCloud) { cb(null); return; }
     leaderboard.refreshCloud().then(function () {
       var far = leaderboard.takeClasses ? leaderboard.takeClasses() : [];
@@ -711,7 +761,366 @@
     '</div>';
   }
 
+  /* ------------------------------------------------------------
+   * 登录页（已接入后端）：账号 + 密码
+   *   登录 / 注册 / 找回密码 三个页签，学生用用户名、老师用邮箱
+   * ------------------------------------------------------------ */
+  function authMsg(id, html) {
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  }
+  function authFail(id, err) {
+    authMsg(id, '<span class="bad">' + esc(err || '操作失败，请重试') + '</span>');
+  }
+  function authBusy(btn, busy, text) {
+    if (!btn) return;
+    if (busy) {
+      if (!btn.getAttribute('data-idle')) btn.setAttribute('data-idle', btn.textContent);
+      btn.disabled = true;
+      btn.textContent = text || '处理中…';
+    } else {
+      btn.disabled = false;
+      var idle = btn.getAttribute('data-idle');
+      if (idle) btn.textContent = idle;
+    }
+  }
+  function inputVal(id) {
+    var el = document.getElementById(id);
+    return el ? String(el.value || '').trim() : '';
+  }
+
+  /** 把云端会话/档案同步进本地状态（S.loggedIn / S.user.*） */
+  /** 清掉「属于某个账号」的本地缓存（换账号 / 退出时必须调用） */
+  function resetUserCaches() {
+    S.joinedClassIds = [];
+    S.wrongIds = [];
+    S.homework = [];
+    S.asks = [];
+    S.customQuestions = [];
+    S.classes = [];
+    S.stats = {};
+    S.history = [];
+    S.daily = {};
+    S.chat = {};
+    S.masteredIds = [];
+    S.coins = 320;
+  }
+
+  function syncAuthToState() {
+    var BE = window.PKBackend;
+    if (!(BE && BE.configured)) return false;
+    var session = BE.session();
+    var p = BE.profile();
+    if (!session || !p) { S.loggedIn = false; return false; }
+    // 换了一个人登录（或退出后别人登录）→ 先把上一个人的数据清干净
+    if (S.user.uid && S.user.uid !== p.id) {
+      cloudEpoch++;                 // 作废上一个人的未完成请求
+      resetUserCaches();
+    }
+    S.user.uid = p.id;
+    S.loggedIn = true;
+    S.user.role = p.role === 'student' ? 'student' : 'teacher';
+    S.user.isAdmin = p.role === 'admin';
+    S.user.name = p.display_name || S.user.name || '同学';
+    S.user.emoji = p.emoji || S.user.emoji;
+    S.user.school = p.school || S.user.school;
+    S.user.gradeKey = p.grade_key || S.user.gradeKey || '';
+    S.user.gradeLabel = p.grade_label || S.user.gradeLabel || '';
+    S.user.login = p.login_name || '';
+    return true;
+  }
+
+  /** 登录后把云端数据灌进本地状态（本地 localStorage 变成缓存，权威数据在数据库） */
+  var cloudEpoch = 0;      // 账号切换 / 退出的代数，用来丢弃过期的云端响应
+  function applyCloudData(res) {
+    if (!res || !res.ok) return;
+    if (!S.loggedIn) return;        // 已经退出登录，不允许再把上一个账号的数据写进来
+
+    // 合并而不是直接覆盖：如果学生的「加入班级」请求刚成功，
+    // 而更早发出的那次云端拉取晚一步返回，直接覆盖会把刚加入的班级抹掉。
+    var classes = mergeById(res.classes || [], S.classes || []);
+    S.classes = classes;
+
+    var joinedMap = {};
+    (res.joinedClassIds || []).forEach(function (id) { if (classById(id)) joinedMap[id] = 1; });
+    (S.joinedClassIds || []).forEach(function (id) { if (classById(id)) joinedMap[id] = 1; });
+    S.joinedClassIds = Object.keys(joinedMap);
+
+    var wrongMap = {};
+    (res.wrongIds || []).forEach(function (id) { wrongMap[id] = 1; });
+    (S.wrongIds || []).forEach(function (id) { wrongMap[id] = 1; });
+    S.wrongIds = Object.keys(wrongMap);
+
+    S.homework = mergeById(res.homework || [], S.homework || []);
+    S.asks = mergeById(res.asks || [], S.asks || []);
+    S.customQuestions = mergeById(res.questions || [], S.customQuestions || []);
+    var ps = res.playerState;
+    if (ps) {
+      ['coins', 'inventory', 'equipped', 'partners', 'home', 'gear', 'chat', 'history', 'daily', 'stats', 'masteredIds'].forEach(function (k) {
+        if (ps[k] !== undefined && ps[k] !== null) S[k] = ps[k];
+      });
+    }
+    var cls = myClass();
+    if (cls) { S.user.klass = cls.name; leaderboard.me.klass = cls.name; }
+    save();
+  }
+
+  /** 按 id 合并两组数据：以云端为主，本地独有的（刚创建的）保留下来 */
+  function mergeById(serverRows, localRows) {
+    var map = {};
+    var order = [];
+    function put(row) {
+      if (!row || row.id === undefined) return;
+      if (map[row.id] === undefined) order.push(row.id);
+      map[row.id] = row;
+    }
+    (localRows || []).forEach(put);
+    (serverRows || []).forEach(put);
+    return order.map(function (id) { return map[id]; });
+  }
+
+  /**
+   * 拉取当前账号的云端数据，并且只应用「还是当前账号」的那一次结果。
+   * 否则会出现：点了退出 → 之前发出去的请求晚一步返回 → 上一个人的数据又冒出来。
+   */
+  function fetchCloudData() {
+    var epoch = ++cloudEpoch;
+    return window.PKBackend.bootstrap().then(function (res) {
+      if (epoch !== cloudEpoch || !S.loggedIn) return null;
+      applyCloudData(res);
+      return res;
+    });
+  }
+
+  /** 登录/注册成功后的统一收尾：拉数据 → 跳转 → 提示改密码 */
+  function afterAuth(navigate) {
+    var BE = window.PKBackend;
+    syncAuthToState();
+    return fetchCloudData().then(function () {
+      healGrades();
+      if (leaderboard.setReady) leaderboard.setReady(true);
+      if (leaderboard.refresh) leaderboard.refresh();
+      ui.loginMsg = '';
+      if (navigate) location.hash = navigate;
+      else if (!location.hash || location.hash === '#/login') location.hash = isTeacher() ? '#/teacher' : '#/home';
+      render();
+      if (BE.mustChangePassword()) {
+        toast('这个账号的密码需要更新，请设置自己的新密码', 'ok');
+        setTimeout(function () { location.hash = '#/account'; render(); }, 500);
+      } else {
+        toast('欢迎回来，' + S.user.name + (myClass() ? '，已加入 ' + myClass().name : ''), 'ok');
+      }
+    });
+  }
+
+  /* ============================================================
+   * 账号设置（改昵称 / 改密码 / 退出 / 进入后台）
+   * ============================================================ */
+  var ACCOUNT_EMOJIS = ['🐱', '🦖', '🚀', '🦄', '🐰', '🐯', '🐼', '🦊', '🐨', '🐹', '🐻', '🐵', '🐧', '🐬', '🦋', '🐢', '🌟', '🍀'];
+
+  function viewAccount() {
+    var BE = window.PKBackend;
+    var cloud = !!(BE && BE.configured);
+    var p = cloud ? BE.profile() : null;
+    var isAdminUser = cloud ? BE.isAdmin() : false;
+    var roleText = p ? (p.role === 'admin' ? '管理员' : p.role === 'teacher' ? '老师' : '学生') : (isTeacher() ? '老师' : '学生');
+    var accountText = p ? (p.login_name || (BE.userEmail() || '')) : '（单机演示，未登录云端）';
+    var emoji = ui.acEmoji || S.user.emoji || '🐱';
+
+    var html = '<section class="page-head fade-in">' +
+      '<div><span class="badge">账号设置</span>' +
+      '<h1 style="margin-top:8px">' + esc(S.user.name || '同学') + ' 的账号</h1>' +
+      '<p class="lead">' + (cloud
+        ? '你的账号存在云端：积分、错题、作业、班级都跟着这个账号走，换设备登录一样在。'
+        : '当前是单机演示模式（没有配置后端），数据只存在这台设备的浏览器里。') + '</p></div>' +
+    '</section>';
+
+    html += '<div class="card">' +
+      '<h3 class="modal-title">🪪 账号信息</h3>' +
+      '<div class="list-row"><span class="grow">身份</span><b>' + esc(roleText) + '</b></div>' +
+      '<div class="list-row"><span class="grow">登录账号</span><b>' + esc(accountText) + '</b></div>' +
+      '<div class="list-row"><span class="grow">学校</span><b>' + esc(S.user.school || '未填写') + '</b></div>' +
+      '<div class="list-row"><span class="grow">班级</span><b>' + esc(S.user.klass || '未加入班级') + '</b></div>' +
+      (p && p.must_change_password
+        ? '<div class="analysis" style="margin-top:10px">⚠️ 这个账号的密码是老师或管理员设置的，建议现在改成只有你自己知道的密码。</div>'
+        : '') +
+    '</div>';
+
+    html += '<div class="card">' +
+      '<h3 class="modal-title">✏️ 昵称与头像</h3>' +
+      '<div class="form-field"><label>昵称</label>' +
+        '<input class="input" id="acName" maxlength="12" value="' + esc(S.user.name || '') + '" placeholder="例如：小明"></div>' +
+      '<div class="form-field"><label>头像</label><div class="emoji-pick" id="acEmoji">' +
+        ACCOUNT_EMOJIS.map(function (em) {
+          return '<button type="button" class="emoji-btn' + (em === emoji ? ' on' : '') + '" data-action="pick-account-emoji" data-emoji="' + em + '">' + em + '</button>';
+        }).join('') +
+      '</div></div>' +
+      '<div id="acNameMsg" class="login-msg"></div>' +
+      '<button class="btn btn-primary" data-action="save-account-name">保存昵称</button>' +
+    '</div>';
+
+    if (cloud) {
+      html += '<div class="card">' +
+        '<h3 class="modal-title">🔑 修改密码</h3>' +
+        '<p class="muted" style="font-size:12.5px;margin-bottom:12px">' +
+          '这就是「用户自己改密码」的入口：先验证当前密码，再设置新密码。修改后其它设备需要重新登录。</p>' +
+        '<div class="form-field"><label>当前密码</label>' +
+          '<input class="input" id="acOld" type="password" autocomplete="current-password" placeholder="现在的密码"></div>' +
+        '<div class="form-field"><label>新密码</label>' +
+          '<input class="input" id="acNew" type="password" autocomplete="new-password" placeholder="至少 6 位"></div>' +
+        '<div class="form-field"><label>确认新密码</label>' +
+          '<input class="input" id="acNew2" type="password" autocomplete="new-password" placeholder="再输一次"></div>' +
+        '<div id="acPassMsg" class="login-msg"></div>' +
+        '<button class="btn btn-primary" data-action="save-password">保存新密码</button>' +
+      '</div>';
+
+      var hasEmail = (BE.userEmail() || '').indexOf('@pk-academy.local') === -1;
+      html += '<div class="card">' +
+        '<h3 class="modal-title">🆘 忘记密码怎么办</h3>' +
+        '<p class="muted" style="font-size:12.5px;line-height:1.9">' +
+          (hasEmail
+            ? '你这个账号绑定了邮箱 <b>' + esc(BE.userEmail()) + '</b>：退出登录后在登录页点「找回密码」，填邮箱就能收到重置链接。'
+            : '学生账号没有绑定邮箱，忘记密码时请联系<b>老师或管理员</b>，他们可以在「后台管理」里帮你重置成一个临时密码，你登录后再到这里改成自己的密码。') +
+        '</p>' +
+      '</div>';
+
+      html += '<div class="card">' +
+        '<h3 class="modal-title">🚪 退出与后台</h3>' +
+        (isAdminUser
+          ? '<button class="btn btn-secondary" style="margin-bottom:10px" data-go="admin.html">🛠 进入后台管理</button>'
+          : '') +
+        '<button class="btn btn-ghost" data-action="logout">退出登录</button>' +
+      '</div>';
+    } else {
+      html += '<div class="card">' +
+        '<h3 class="modal-title">🚪 退出</h3>' +
+        '<button class="btn btn-ghost" data-action="logout">退出登录</button>' +
+      '</div>';
+    }
+
+    return html;
+  }
+
   function viewLogin() {
+    var BE = window.PKBackend;
+    if (!(BE && BE.configured)) return viewLoginOffline();
+    if (BE.recoveryMode()) return viewRecovery();
+
+    var tab = ui.authTab || 'login';
+    var role = ui.loginRole || 'student';
+    var isStu = role !== 'teacher';
+    var msg = ui.loginMsg || '';
+    var schoolVal = esc(S.user.school || S.lastSchool || '');
+
+    var fields = '';
+    if (tab === 'login') {
+      fields =
+        '<div class="form-field"><label>账号</label>' +
+          '<input class="input" id="lgUser" autocomplete="username" placeholder="学生填用户名，老师填邮箱" value="' + esc(ui.loginUser || '') + '"></div>' +
+        '<div class="form-field"><label>密码</label>' +
+          '<input class="input" id="lgPass" type="password" autocomplete="current-password" placeholder="请输入密码"></div>' +
+        '<div id="lgMsg" class="login-msg">' + msg + '</div>' +
+        '<button class="btn btn-primary btn-lg btn-block" data-action="do-login">🚀 登录</button>' +
+        '<p class="login-tip">还没有账号？点上面的「注册」；忘了密码可以点「找回密码」。</p>';
+    } else if (tab === 'register') {
+      fields =
+        '<div class="form-field"><label>学校名称</label>' +
+          '<input class="input" id="rgSchool" maxlength="20" placeholder="例如：阳光小学" value="' + schoolVal + '"></div>' +
+        '<div class="form-field"><label>你的称呼</label>' +
+          '<input class="input" id="rgName" maxlength="12" placeholder="' + (isStu ? '例如：小明' : '例如：李老师') + '"></div>' +
+        (isStu
+          ? '<div class="form-field"><label>账号（登录用）</label>' +
+              '<input class="input" id="rgUser" maxlength="20" placeholder="2–20 位字母、数字或中文，例如 xiaoming"></div>'
+          : '<div class="form-field"><label>邮箱（用于找回密码）</label>' +
+              '<input class="input" id="rgEmail" type="email" placeholder="you@example.com"></div>') +
+        '<div class="form-field"><label>密码</label>' +
+          '<input class="input" id="rgPass" type="password" autocomplete="new-password" placeholder="至少 6 位"></div>' +
+        '<div id="rgMsg" class="login-msg">' + msg + '</div>' +
+        '<button class="btn btn-primary btn-lg btn-block" data-action="do-register" data-role="' + (isStu ? 'student' : 'teacher') + '">' +
+          (isStu ? '🎒 注册学生账号' : '🧑‍🏫 注册老师账号') + '</button>' +
+        '<p class="login-tip">' +
+          (isStu
+            ? '学生账号没有邮箱也能用。忘了密码时，让老师或管理员在后台帮你重置。'
+            : '老师账号用邮箱注册，忘记密码可以自助找回。注册后可能需要到邮箱点一下确认链接。') +
+        '</p>';
+    } else {
+      fields =
+        '<div class="form-field"><label>账号或邮箱</label>' +
+          '<input class="input" id="fgUser" autocomplete="username" placeholder="学生填用户名，老师填注册邮箱"></div>' +
+        '<div id="fgMsg" class="login-msg">' + msg + '</div>' +
+        '<button class="btn btn-primary btn-lg btn-block" data-action="do-forgot">📮 发送重置邮件</button>' +
+        '<p class="login-tip">只有绑定邮箱的账号（一般是老师）能自助重置。学生账号请让老师或管理员在「后台管理」里重置密码，再登录后自行修改。</p>';
+    }
+
+    return '<div class="login-wrap fade-in">' +
+      '<div class="login-card">' +
+        '<div class="login-brand">' +
+          '<div class="login-logo">🐱</div>' +
+          '<div><div class="login-title">汤姆猫跑酷学堂</div>' +
+          '<div class="login-sub">边跑边学 · 实时积分榜 · 游戏化课堂</div></div>' +
+        '</div>' +
+
+        '<div class="role-switch" role="tablist">' +
+          '<button data-action="auth-tab" data-key="login" class="' + (tab === 'login' ? 'on' : '') + '">登录</button>' +
+          '<button data-action="auth-tab" data-key="register" class="' + (tab === 'register' ? 'on' : '') + '">注册</button>' +
+          '<button data-action="auth-tab" data-key="forgot" class="' + (tab === 'forgot' ? 'on' : '') + '">找回密码</button>' +
+        '</div>' +
+
+        (tab === 'register'
+          ? '<div class="role-switch" role="tablist" style="margin-top:-4px">' +
+              '<button data-action="login-role" data-role="student" class="' + (isStu ? 'on' : '') + '">🧑‍🎓 我是学生</button>' +
+              '<button data-action="login-role" data-role="teacher" class="' + (!isStu ? 'on' : '') + '">🧑‍🏫 我是老师</button>' +
+            '</div>'
+          : '') +
+
+        '<div class="login-form">' + fields + '</div>' +
+        '<div id="connMsg" class="login-msg" style="margin-top:10px"></div>' +
+        '<button class="btn btn-ghost btn-sm btn-block" data-action="check-connection" style="margin-top:6px">🔌 检查连接（连不上数据库时点这里）</button>' +
+      '</div>' +
+
+      '<div class="login-side">' +
+        '<h2 class="login-side-title">账号说明</h2>' +
+        '<div class="login-steps">' +
+          '<div class="login-step"><div class="login-step-num">1</div><div class="login-step-emoji">🆕</div>' +
+            '<div><b>注册</b><p>学生用「用户名 + 密码」注册，不用邮箱；老师用邮箱注册。</p></div></div>' +
+          '<div class="login-step"><div class="login-step-num">2</div><div class="login-step-emoji">🎒</div>' +
+            '<div><b>加入班级</b><p>登录后在「我的课堂」填老师给的 4 位班级码。</p></div></div>' +
+          '<div class="login-step"><div class="login-step-num">3</div><div class="login-step-emoji">🔑</div>' +
+            '<div><b>改密码</b><p>登录后进「账号设置」就能修改自己的密码。</p></div></div>' +
+          '<div class="login-step"><div class="login-step-num">4</div><div class="login-step-emoji">☁️</div>' +
+            '<div><b>数据跟着账号走</b><p>积分、错题、作业都存在云端，换设备登录一样在。</p></div></div>' +
+        '</div>' +
+        '<p class="muted" style="font-size:11.5px;margin-top:12px;text-align:center">当前版本 ' + APP_VERSION + '（看到旧界面请强制刷新）</p>' +
+      '</div>' +
+    '</div>';
+  }
+
+  /** 点了邮件里的重置链接回到站点：在这里设置新密码 */
+  function viewRecovery() {
+    return '<div class="login-wrap fade-in">' +
+      '<div class="login-card">' +
+        '<div class="login-brand"><div class="login-logo">🔑</div>' +
+          '<div><div class="login-title">设置新密码</div>' +
+          '<div class="login-sub">邮件验证通过，设置后即可用新密码登录</div></div></div>' +
+        '<div class="login-form">' +
+          '<div class="form-field"><label>新密码</label>' +
+            '<input class="input" id="rcPass" type="password" autocomplete="new-password" placeholder="至少 6 位"></div>' +
+          '<div class="form-field"><label>再输一次</label>' +
+            '<input class="input" id="rcPass2" type="password" autocomplete="new-password" placeholder="确认新密码"></div>' +
+          '<div id="rcMsg" class="login-msg"></div>' +
+          '<button class="btn btn-primary btn-lg btn-block" data-action="do-recovery">💾 保存新密码</button>' +
+          '<button class="btn btn-ghost btn-block" data-action="do-cancel-recovery">稍后再说</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="login-side"><h2 class="login-side-title">小提示</h2>' +
+        '<p class="muted" style="font-size:13px;line-height:1.9">密码建议 8 位以上，包含字母和数字。设置完成后，其它设备需要重新登录。</p></div>' +
+    '</div>';
+  }
+
+  /* ------------------------------------------------------------
+   * 登录页（离线演示）：没有配置后端时，填昵称即可进入
+   * ------------------------------------------------------------ */
+  function viewLoginOffline() {
     var role = ui.loginRole || S.user.role || 'student';
     var isStu = role !== 'teacher';
     var cls = myClass();
@@ -1145,7 +1554,7 @@
           st.correct += 1;
           st.points += 12;
           // 积分由数据源统一入账（连后端时为后端权威值，onAward 回调里累计到每日趋势）
-          leaderboard.addMineAnswer(true, question.subject, question.difficulty === 'final' ? 20 : question.difficulty === 'consolidated' ? 10 : 0);
+          leaderboard.addMineAnswer(true, question.subject, question.difficulty === 'final' ? 20 : question.difficulty === 'consolidated' ? 10 : 0, question.id);
           S.coins += 20;
           if (S.wrongIds.indexOf(question.id) !== -1 && correct) {
             S.wrongIds = S.wrongIds.filter(function (id) { return id !== question.id; });
@@ -1153,7 +1562,7 @@
             toast('错题已攻克：' + question.content.slice(0, 14) + '…', 'ok');
           }
         } else {
-          leaderboard.addMineAnswer(false, question.subject);
+          leaderboard.addMineAnswer(false, question.subject, 0, question.id);
           if (S.wrongIds.indexOf(question.id) === -1) S.wrongIds.push(question.id);
         }
         save();
@@ -1186,6 +1595,17 @@
               at: Date.now(), score: result.score, accuracy: result.accuracy,
               correct: result.correct, answered: result.answered, victory: result.victory
             };
+            // 云端提交：老师的作业管理 / 学情看板立刻能看到这份成绩
+            if (window.PKBackend && window.PKBackend.configured) {
+              window.PKBackend.submitHomework({
+                homeworkId: homeworkId,
+                victory: result.victory,
+                score: result.score,
+                correctCount: result.correct,
+                total: result.answered,
+                answers: (result.answers || [])
+              });
+            }
             toast(result.victory ? '作业已完成并提交，老师能看到你的成绩啦' : '作业本次未通过，可以再挑战一次', result.victory ? 'ok' : 'bad');
           }
         }
@@ -2569,6 +2989,7 @@
       else html = viewStudent();
     } else if (seg[0] === 'leaderboard') html = viewLeaderboard();
     else if (seg[0] === 'guide') html = viewGuide();
+    else if (seg[0] === 'account') html = viewAccount();
     else if (seg[0] === 'teacher') html = viewTeacher();
     else html = '<div class="empty"><span class="em">🧭</span>页面不存在<button class="btn btn-ghost" style="margin-left:10px" data-go="#/home">返回首页</button></div>';
 
@@ -2651,7 +3072,17 @@
       if (!online) online = snap.entries.filter(function (e) { return !e.isBot && (e.online === undefined || e.online); }).length;
     } catch (e) {}
     lbOnline = online;
-    if (lbMode === 'remote') {
+    // 云端账号模式：数据源会直接告诉我们当前是 'backend'
+    var modeNow = lbMode;
+    try { if (leaderboard.mode) modeNow = leaderboard.mode; } catch (e) {}
+
+    if (modeNow === 'backend') {
+      el.innerHTML = '☁️ 云端账号 · ' + online + ' 人在线';
+      el.style.background = 'linear-gradient(135deg,#eefaf3,#dcf5e6)';
+      el.style.borderColor = '#bfe9cf';
+      el.style.color = '#12833f';
+      el.title = '已连接云端数据库：账号、积分、错题、作业都保存在服务器上，换设备登录也在';
+    } else if (lbMode === 'remote') {
       el.innerHTML = '🟢 实时后端 · ' + online + ' 人在线';
       el.style.background = 'linear-gradient(135deg,#eefaf3,#dcf5e6)';
       el.style.borderColor = '#bfe9cf';
@@ -2769,7 +3200,10 @@
     var goEl = e.target.closest('[data-go]');
     if (goEl) {
       var target = goEl.getAttribute('data-go');
-      if (target) { location.hash = target; }
+      if (target) {
+        if (target.charAt(0) === '#') location.hash = target;
+        else location.href = target;      // 例如跳转到独立的后台管理页 admin.html
+      }
       return;
     }
     var actionEl = e.target.closest('[data-action]');
@@ -2853,6 +3287,143 @@
         ui.loginMsg = '';
         render();
         break;
+      case 'auth-tab':
+        ui.authTab = actionEl.getAttribute('data-key') || 'login';
+        ui.loginMsg = '';
+        render();
+        break;
+      case 'do-login': {
+        var loginUser = inputVal('lgUser');
+        var loginPass = document.getElementById('lgPass') ? document.getElementById('lgPass').value : '';
+        if (!loginUser || !loginPass) { authFail('lgMsg', '请填写账号和密码'); break; }
+        ui.loginUser = loginUser;
+        authBusy(actionEl, true, '登录中…');
+        window.PKBackend.signIn(loginUser, loginPass).then(function (r) {
+          authBusy(actionEl, false);
+          if (!r.ok) { authFail('lgMsg', r.error); return; }
+          afterAuth();
+        });
+        break;
+      }
+      case 'do-register': {
+        var regRole = actionEl.getAttribute('data-role') || 'student';
+        var regSchool = inputVal('rgSchool');
+        var regName = inputVal('rgName');
+        var regPass = document.getElementById('rgPass') ? document.getElementById('rgPass').value : '';
+        if (!regSchool) { authFail('rgMsg', '请先填写学校名称'); break; }
+        if (!regName) { authFail('rgMsg', '请填写你的称呼'); break; }
+        if (regPass.length < 6) { authFail('rgMsg', '密码至少 6 位'); break; }
+        authBusy(actionEl, true, '注册中…');
+        var regCall = regRole === 'teacher'
+          ? window.PKBackend.signUpTeacher({ email: inputVal('rgEmail'), password: regPass, name: regName, school: regSchool })
+          : window.PKBackend.signUpStudent({ login: inputVal('rgUser'), password: regPass, name: regName, school: regSchool, emoji: S.user.emoji });
+        regCall.then(function (r) {
+          authBusy(actionEl, false);
+          if (!r.ok) { authFail('rgMsg', r.error); return; }
+          S.lastSchool = regSchool;
+          save();
+          if (r.needConfirm) {
+            ui.authTab = 'login';
+            ui.loginMsg = '<span class="ok">' + esc(r.message || '账号已创建，请完成邮箱验证后登录') + '</span>';
+            render();
+            return;
+          }
+          afterAuth();
+        });
+        break;
+      }
+      case 'do-forgot': {
+        var fgUser = inputVal('fgUser');
+        if (!fgUser) { authFail('fgMsg', '请填写账号或邮箱'); break; }
+        authBusy(actionEl, true, '发送中…');
+        window.PKBackend.sendResetEmail(fgUser).then(function (r) {
+          authBusy(actionEl, false);
+          authMsg('fgMsg', r.ok
+            ? '<span class="ok">' + esc(r.message || '重置邮件已发送') + '</span>'
+            : '<span class="bad">' + esc(r.error) + '</span>');
+        });
+        break;
+      }
+      case 'do-recovery': {
+        var rc1 = document.getElementById('rcPass') ? document.getElementById('rcPass').value : '';
+        var rc2 = document.getElementById('rcPass2') ? document.getElementById('rcPass2').value : '';
+        if (rc1.length < 6) { authFail('rcMsg', '密码至少 6 位'); break; }
+        if (rc1 !== rc2) { authFail('rcMsg', '两次输入的密码不一样'); break; }
+        authBusy(actionEl, true, '保存中…');
+        window.PKBackend.updatePassword(rc1).then(function (r) {
+          authBusy(actionEl, false);
+          if (!r.ok) { authFail('rcMsg', r.error); return; }
+          window.PKBackend.clearRecovery();
+          toast('密码已更新，请用新密码登录', 'ok');
+          location.hash = '#/login';
+          render();
+        });
+        break;
+      }
+      case 'do-cancel-recovery':
+        window.PKBackend.clearRecovery();
+        location.hash = '#/login';
+        render();
+        break;
+      case 'check-connection': {
+        authMsg('connMsg', '<span class="muted">正在检查…</span>');
+        window.PKBackend.healthCheck().then(function (r) {
+          authMsg('connMsg', (r.ok ? '<span class="ok">✅ ' : '<span class="bad">❌ ') + esc(r.message) + '</span>');
+        });
+        break;
+      }
+      case 'open-account':
+        location.hash = '#/account';
+        render();
+        break;
+      case 'pick-account-emoji':
+        ui.acEmoji = actionEl.getAttribute('data-emoji') || S.user.emoji;
+        render();
+        break;
+      case 'save-account-name': {
+        var acName = inputVal('acName');
+        if (!acName) { authFail('acNameMsg', '请填写昵称'); break; }
+        authBusy(actionEl, true, '保存中…');
+        S.user.name = acName.slice(0, 12);
+        S.user.emoji = ui.acEmoji || S.user.emoji;
+        save();
+        if (leaderboard.updateProfile) {
+          leaderboard.updateProfile({
+            name: S.user.name, emoji: S.user.emoji, klass: S.user.klass,
+            school: S.user.school, gradeKey: S.user.gradeKey, gradeLabel: S.user.gradeLabel
+          });
+        }
+        window.PKBackend.updateProfileFields({ display_name: S.user.name, emoji: S.user.emoji }).then(function (r) {
+          authBusy(actionEl, false);
+          if (!r.ok) { authFail('acNameMsg', r.error); return; }
+          toast('昵称已保存', 'ok');
+          render();
+        });
+        break;
+      }
+      case 'save-password': {
+        var oldPass = document.getElementById('acOld') ? document.getElementById('acOld').value : '';
+        var newPass = document.getElementById('acNew') ? document.getElementById('acNew').value : '';
+        var newPass2 = document.getElementById('acNew2') ? document.getElementById('acNew2').value : '';
+        if (!oldPass) { authFail('acPassMsg', '请先输入当前密码'); break; }
+        if (newPass.length < 6) { authFail('acPassMsg', '新密码至少 6 位'); break; }
+        if (newPass !== newPass2) { authFail('acPassMsg', '两次输入的新密码不一样'); break; }
+        authBusy(actionEl, true, '修改中…');
+        window.PKBackend.verifyPassword(oldPass).then(function (v) {
+          if (!v.ok) { authBusy(actionEl, false); authFail('acPassMsg', v.error); return null; }
+          return window.PKBackend.updatePassword(newPass).then(function (r) {
+            authBusy(actionEl, false);
+            if (!r.ok) { authFail('acPassMsg', r.error); return; }
+            ['acOld', 'acNew', 'acNew2'].forEach(function (id) {
+              var el = document.getElementById(id);
+              if (el) el.value = '';
+            });
+            authMsg('acPassMsg', '<span class="ok">✅ 密码已修改，下次登录请用新密码</span>');
+            toast('密码已修改', 'ok');
+          });
+        });
+        break;
+      }
       case 'login-enter': {
         var wantRole = actionEl.getAttribute('data-role') || ui.loginRole || 'student';
         var skipCode = actionEl.getAttribute('data-skip') === '1';
@@ -2918,14 +3489,31 @@
         finishStudentLogin();
         break;
       }
-      case 'logout':
+      case 'logout': {
+        var prevRole = S.user.role;
+        var prevSchool = S.user.school || S.lastSchool;
+        // 学校机房 / 公用电脑上必须清干净，不能让下一个同学看到上一个人的数据
         S.loggedIn = false;
-        ui.loginRole = S.user.role;
+        resetUserCaches();
+        S.user = {
+          name: '', emoji: '🐱', klass: '', role: 'student',
+          school: prevSchool || '', gradeKey: '', gradeLabel: ''
+        };
+        ui.loginRole = prevRole;
+        ui.authTab = 'login';
+        ui.loginMsg = '';
+        ui.loginUser = '';
+        cloudEpoch++;        // 作废还没回来的云端响应，避免上一个人的数据回填
         save();
         location.hash = '#/login';
         render();
-        toast('已退出，可切换账号重新进入');
+        if (window.PKBackend && window.PKBackend.configured) {
+          window.PKBackend.signOut().then(function () { toast('已退出登录，可换账号进入', 'ok'); });
+        } else {
+          toast('已退出，可切换账号重新进入');
+        }
         break;
+      }
       case 'upgrade-partner': {
         var upId = actionEl.getAttribute('data-id');
         var curLv = partnerLevel(upId);
@@ -3044,7 +3632,11 @@
           askRec.answeredBy = S.user.name || '老师';
         }
         save();
-        if (leaderboard.publishReply) {
+        if (window.PKBackend && window.PKBackend.configured) {
+          window.PKBackend.replyAsk(askId, replyText).then(function (r) {
+            if (!r.ok) toast(r.error || '回复没发出去，请重试', 'bad');
+          });
+        } else if (leaderboard.publishReply) {
           leaderboard.publishReply({ qid: askId, text: replyText, n: S.user.name || '老师', at: Date.now() });
         }
         toast('回复已发送，学生端可以看到啦', 'ok');
@@ -3055,6 +3647,9 @@
         var delAsk = actionEl.getAttribute('data-id');
         S.asks = (S.asks || []).filter(function (a) { return a.id !== delAsk; });
         save();
+        if (window.PKBackend && window.PKBackend.configured) {
+          window.PKBackend.deleteAsk(delAsk);
+        }
         toast('已删除该提问');
         render();
         break;
@@ -3313,21 +3908,43 @@
         students: Math.max(0, parseInt(wrap.querySelector('#ccStudents').value, 10) || 0),
         avg: 0, rate: 0, createdAt: Date.now()
       };
-      S.classes.push(cls);
-      S.user.school = cls.school;
-      save();
-      if (leaderboard.publishClass) {
-        leaderboard.publishClass({
-          cid: cls.id, name: cls.name, code: cls.code, school: cls.school,
-          gradeKey: cls.gradeKey, gradeLabel: cls.gradeLabel, stage: cls.stage,
-          owner: cls.owner, teacher: cls.teacher, students: cls.students, at: cls.createdAt
+
+      var finishCreate = function (finalCls) {
+        S.classes.push(finalCls);
+        S.user.school = finalCls.school;
+        save();
+        if (leaderboard.publishClass) {
+          leaderboard.publishClass({
+            cid: finalCls.id, name: finalCls.name, code: finalCls.code, school: finalCls.school,
+            gradeKey: finalCls.gradeKey, gradeLabel: finalCls.gradeLabel, stage: finalCls.stage,
+            owner: finalCls.owner, teacher: finalCls.teacher, students: finalCls.students, at: finalCls.createdAt
+          });
+        }
+        save();
+        wrap.remove();
+        ui.teacherTab = 'classes';
+        render();
+        showClassCode(finalCls.id, true);
+      };
+
+      // 配了后端：班级要建在云端（班级码由服务器生成，保证同校唯一）
+      var ccBackend = window.PKBackend;
+      if (ccBackend && ccBackend.configured) {
+        var ccBtn = wrap.querySelector('#ccSave');
+        ccBtn.disabled = true;
+        ccBtn.textContent = '创建中…';
+        ccBackend.createClass({
+          name: cls.name, school: cls.school,
+          gradeKey: cls.gradeKey, gradeLabel: cls.gradeLabel, stage: cls.stage
+        }).then(function (r) {
+          ccBtn.disabled = false;
+          ccBtn.textContent = '创建班级';
+          if (!r.ok) { msg.innerHTML = '<span style="color:#c62c27">' + esc(r.error) + '</span>'; return; }
+          finishCreate(Object.assign({}, cls, r.klass || {}, { owner: cls.owner, teacher: cls.teacher }));
         });
+        return;
       }
-      save();
-      wrap.remove();
-      ui.teacherTab = 'classes';
-      render();
-      showClassCode(cls.id, true);
+      finishCreate(cls);
     };
   }
 
@@ -3439,7 +4056,10 @@
           if (setMsgById('jcMsg', errHtml)) toast('没找到这个班级，请核对学校名与班级码', 'bad');
           else toast('没找到这个班级，请核对学校名与班级码', 'bad');
           ui.pendingJoin = { school: school, code: code };
-          setMsgById('jcFallback', '<button class="btn btn-ghost btn-sm btn-block" data-action="join-offline">网络连不上云端？点这里仍然加入这个班级码</button>');
+          // 只有没配后端时才提供「离线加入」兜底；云端模式下不允许绕过服务器校验
+          if (!(window.PKBackend && window.PKBackend.configured)) {
+            setMsgById('jcFallback', '<button class="btn btn-ghost btn-sm btn-block" data-action="join-offline">网络连不上云端？点这里仍然加入这个班级码</button>');
+          }
           return;
         }
         ui.pendingJoin = null;
@@ -3634,8 +4254,7 @@
       var cls = classById(clsId);
       var due = wrap.querySelector('#hwDue').value || '';
       var note = wrap.querySelector('#hwNote').value.trim();
-      S.homework = S.homework || [];
-      S.homework.unshift({
+      var hwDraft = {
         id: uid('hw'),
         title: title.slice(0, 40),
         note: note,
@@ -3650,13 +4269,34 @@
         due: due,
         status: 'open',
         submissions: {}
-      });
-      save();
-      wrap.remove();
-      toast('作业已发布给「' + (cls ? cls.name : '') + '」，共 ' + ui.hwSelected.length + ' 道题', 'ok');
-      confetti(50);
-      ui.teacherTab = 'homework';
-      render();
+      };
+
+      var finishPublish = function (hw) {
+        S.homework = S.homework || [];
+        S.homework.unshift(hw);
+        save();
+        wrap.remove();
+        toast('作业已发布给「' + (cls ? cls.name : '') + '」，共 ' + ui.hwSelected.length + ' 道题', 'ok');
+        confetti(50);
+        ui.teacherTab = 'homework';
+        render();
+      };
+
+      // 配了后端：作业进数据库，学生换设备也能收到
+      var hwBackend = window.PKBackend;
+      if (hwBackend && hwBackend.configured) {
+        var hwBtn = wrap.querySelector('#hwSave');
+        hwBtn.disabled = true;
+        hwBtn.textContent = '发布中…';
+        hwBackend.createHomework(hwDraft).then(function (r) {
+          hwBtn.disabled = false;
+          hwBtn.textContent = '发布作业';
+          if (!r.ok) { msg.innerHTML = '<span style="color:#c62c27">' + esc(r.error) + '</span>'; return; }
+          finishPublish(Object.assign({}, hwDraft, r.homework || {}));
+        });
+        return;
+      }
+      finishPublish(hwDraft);
     };
   }
 
@@ -3747,6 +4387,32 @@
         createdAt: Date.now(),
         status: 'open'
       };
+
+      // 配了后端：提问直接进数据库（老师换设备也能看到，回复也不会丢）
+      var askBackend = window.PKBackend;
+      if (askBackend && askBackend.configured) {
+        var askBtn = wrap.querySelector('#askSave');
+        askBtn.disabled = true;
+        askBtn.textContent = '发送中…';
+        askBackend.uploadImage(rec.image, 'ask').then(function (url) {
+          return askBackend.createAsk({
+            text: rec.text, image: url || rec.image, classList: [rec.classId]
+          });
+        }).then(function (r) {
+          askBtn.disabled = false;
+          askBtn.textContent = '发送给老师';
+          if (!r.ok) { msg.innerHTML = '<span class="bad">' + esc(r.error) + '</span>'; return; }
+          S.asks = S.asks || [];
+          S.asks.unshift(Object.assign({}, rec, r.ask || {}));
+          save();
+          wrap.remove();
+          confetti(30);
+          toast('问题已发给老师，回复后会出现在「我的提问」里', 'ok');
+          render();
+        });
+        return;
+      }
+
       S.asks = S.asks || [];
       S.asks.unshift(rec);
       save();
@@ -3908,11 +4574,31 @@
         msg.innerHTML = '<span style="color:#c62c27">答案校验未通过：' + esc(check.failures[0].message) + '</span>';
         return;
       }
-      S.customQuestions.push(q);
-      save();
-      wrap.remove();
-      toast('题目已保存，答案校验通过', 'ok');
-      render();
+      var finishQuestion = function (finalQ) {
+        S.customQuestions.push(finalQ);
+        save();
+        wrap.remove();
+        toast('题目已保存，答案校验通过', 'ok');
+        render();
+      };
+
+      // 配了后端：题目存云端题库，布置作业时全班都能用到
+      var qBackend = window.PKBackend;
+      if (qBackend && qBackend.configured) {
+        var qBtn = wrap.querySelector('#qfSave');
+        if (qBtn) { qBtn.disabled = true; qBtn.textContent = '保存中…'; }
+        var withImage = q;
+        qBackend.uploadImage(q.image, 'q').then(function (url) {
+          withImage = Object.assign({}, q, { image: url || q.image });
+          return qBackend.saveQuestion(withImage);
+        }).then(function (r) {
+          if (qBtn) { qBtn.disabled = false; qBtn.textContent = '保存并校验'; }
+          if (!r.ok) { msg.innerHTML = '<span style="color:#c62c27">' + esc(r.error) + '</span>'; return; }
+          finishQuestion(Object.assign({}, withImage, r.question || {}));
+        });
+        return;
+      }
+      finishQuestion(q);
     };
   }
 
@@ -3926,23 +4612,58 @@
     render();
   });
 
-  if (!S.loggedIn) {
-    // 未登录：只显示登录页，其余入口全部拦住
-    if (location.hash !== '#/login') location.hash = '#/login';
-    render();
-  } else if (!location.hash) {
-    location.hash = '#/home';
-  } else {
-    render();
+  function bootRender() {
+    if (!S.loggedIn) {
+      // 未登录：只显示登录页，其余入口全部拦住
+      if (location.hash !== '#/login') location.hash = '#/login';
+      render();
+    } else if (!location.hash || location.hash === '#/login') {
+      location.hash = isTeacher() ? '#/teacher' : '#/home';
+      render();
+    } else {
+      render();
+    }
+    healGrades();     // 老班级按班级名自动补全年级（AI 识别）
+    if (!S.seenGuide && S.loggedIn) {
+      setTimeout(function () {
+        if (!S.seenGuide && S.loggedIn && !document.querySelector('.overlay')) openGuide();
+      }, 900);
+    }
   }
-  if (S.loggedIn && leaderboard.setReady) leaderboard.setReady(true);
-  healGrades();     // 老班级按班级名自动补全年级（AI 识别）
 
-  // 登录后首次进入自动弹出「使用解说」（勾选“下次不再弹出”后不再自动弹）
-  if (!S.seenGuide && S.loggedIn) {
-    setTimeout(function () {
-      if (!S.seenGuide && S.loggedIn && !document.querySelector('.overlay')) openGuide();
-    }, 900);
+  /** 登录 / 退出后统一刷新界面与数据源 */
+  function onAuthStateChanged() {
+    var hadSession = S.loggedIn;
+    var hasSession = syncAuthToState();
+    if (hasSession !== hadSession) rebuildLeaderboard();
+    if (!hasSession) { render(); return; }
+    fetchCloudData().then(function () {
+      if (leaderboard.refresh) leaderboard.refresh();
+      render();
+    });
+  }
+
+  var PKBackendRef = window.PKBackend;
+  if (PKBackendRef && PKBackendRef.configured) {
+    // 登录 / 退出 / 邮件重置链接回来，都会触发这个回调，界面与数据源随之切换
+    PKBackendRef.onAuthChange(function () { onAuthStateChanged(); });
+    // 云端模式：先确认登录状态，再拉取该账号的数据
+    PKBackendRef.init().then(function () {
+      S.loggedIn = syncAuthToState();
+      if (!S.loggedIn) { bootRender(); return; }
+      rebuildLeaderboard();
+      return fetchCloudData().then(function () {
+        bootRender();
+        if (PKBackendRef.recoveryMode()) { location.hash = '#/login'; render(); }
+        else if (PKBackendRef.mustChangePassword() && location.hash !== '#/account') {
+          toast('请先到「账号设置」修改自己的密码', 'ok');
+        }
+      });
+    });
+  } else {
+    // 单机演示模式：沿用本地登录态
+    bootRender();
+    if (S.loggedIn && leaderboard.setReady) leaderboard.setReady(true);
   }
 
   setInterval(function () { save(); }, 15000);
@@ -3950,13 +4671,15 @@
 
   window.PKApp = {
     state: S,
-    leaderboard: leaderboard,
     render: render,
     getGame: function () { return currentGame; },
     refreshLive: refreshLive,
+    syncAuthToState: syncAuthToState,
+    applyCloudData: applyCloudData,
     reset: function () {
       try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
       location.reload();
     }
   };
+  Object.defineProperty(window.PKApp, 'leaderboard', { get: function () { return leaderboard; } });
 })();

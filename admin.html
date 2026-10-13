@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>后台管理 · 汤姆猫跑酷学堂</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠</text></svg>">
+  <link rel="stylesheet" href="styles.css?v=10">
+  <link rel="stylesheet" href="admin.css?v=10">
+</head>
+<body class="admin-body">
+  <div id="adminRoot">
+    <div class="admin-loading">
+      <div class="spinner"></div>
+      <p class="muted">正在检查登录状态…</p>
+    </div>
+  </div>
+
+  <!-- 后端 SDK 与数据层（与主站共用） -->
+  <script src="vendor/supabase.js?v=10"></script>
+  <script src="config.js?v=10"></script>
+  <script src="backend.js?v=10"></script>
+  <script src="admin.js?v=10"></script>
+</body>
+</html>
